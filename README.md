@@ -1,6 +1,6 @@
-# Agent Project
+# Galileo Onboarding Project
 
-A simple agent project with Streamlit frontend and FastAPI backend.
+Use case, workflow, user query description goes here.
 
 ## Project Structure
 
