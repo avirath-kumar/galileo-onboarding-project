@@ -61,4 +61,4 @@ Thumbs.db
 logs/
 
 # Static
-static/*
+static/
