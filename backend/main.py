@@ -34,6 +34,7 @@ llm = ChatOpenAI(
 # Create classes for chat requests and responses
 class ChatRequest(BaseModel):
     message: str
+    conversation_history: Optional[List[Dict]] = None
 
 class ChatResponse(BaseModel):
     response: str
