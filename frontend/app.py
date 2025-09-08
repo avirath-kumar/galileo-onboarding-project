@@ -2,7 +2,7 @@ import streamlit as st
 import requests
 import json
 
-st.set_page_config(page_title="Agent Frontend", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="Aurora Works Product Agent", page_icon="💻", layout="wide")
 
 # Helper function for backend health check
 def check_backend_health():
@@ -25,7 +25,7 @@ def send_message(message):
 
 # Main frontend page function
 def main():
-    st.title("🤖 Agent Frontend")
+    st.title("💻 Aurora Works Product Agent")
     
     if check_backend_health():
         st.success("Backend is connected")
@@ -34,7 +34,7 @@ def main():
     
     st.markdown("---")
     
-    st.header("Agent Interface")
+    st.header("Ask product questions here:")
     
     user_input = st.text_input("Enter your message:")
     
