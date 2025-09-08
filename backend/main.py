@@ -1,13 +1,20 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import List, Optional, Dict
 from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 import uvicorn
 import os
 
+# Import agent
+from agent_graph import process_query
+from rag_pipeline import get_rag_pipeline
+
+# Load env vars
 load_dotenv()
 
+# Initialize FastAPI app
 app = FastAPI(title="Agent API", version="1.0.0")
 
 app.add_middleware(
@@ -41,15 +48,35 @@ def read_root():
 def health_check():
     return {"status": "healthy"}
 
-# Chat endpoint
+# Chat endpoint - uses the agent, will automatically classify / route to rag if needed
 @app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest):
+async def chat(request: ChatRequest):
     try:
-        response = llm.invoke(request.message)
-        return ChatResponse(response=response.content)
+        response = await process_query(
+            user_query=request.message,
+            conversation_history=request.conversation_history
+        )
+
+        return ChatResponse(response=response)
+    
     except Exception as e:
-        return ChatResponse(response=f"Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
+
+# Initialize RAG on startup
+@app.on_event("startup")
+async def startup_event():
+    try:
+        print("Initializing RAG pipeline...")
+        rag = get_rag_pipeline()
+        stats = rag.get_stats()
+        print(f"RAG pipeline ready with {stats['total_chunks']} chunks")
+    except Exception as e:
+        print(f"Warning: Could not initialize RAG pipeline: {str(e)}")
 
 # Main function
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(
+        app,
+        host=os.getenv("API_HOST", "0.0.0.0"),
+        port=int(os.getenv("API_PORT", 8000))
+    )
