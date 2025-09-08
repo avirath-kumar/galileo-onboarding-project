@@ -5,206 +5,126 @@ from langgraph.graph import StateGraph, END
 from langchain.tools import tool
 import operator
 from dotenv import load_dotenv
+import os
+
+# import local rag pipeline as library
+from rag_pipeline import get_rag_pipeline
 
 # Load environment variables from .env file
 load_dotenv()
 
 # Initialize the LLM
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=os.getenv("OPENAI_API_KEY"))
 
 # Define the agent state structure
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], operator.add]  # reducer function so multiple nodes can run in parallel
-    classification: str  # classify the input type
-    tool_results: List[Dict]
-    analysis: str
+    classification: str  # classify the input type - "general" or "product_question"
+    rag_context: str
     final_response: str
 
 # Tool definitions - functions the agent can call
 @tool
-def example_tool_one(input_param: str) -> Dict:
-    """Example tool that processes some input and returns results."""
-    
-    try:
-        # Your tool logic here
-        result = {
-            "status": "success",
-            "data": f"Processed: {input_param}",
-            "metadata": {"timestamp": "2024-01-01"}
-        }
-        return result
-    except Exception as e:
-        return {"error": f"Tool Error: {str(e)}"}
+def placeholder_tool_one(input_param: str) -> Dict:
+    """Placeholder tool for future functionality."""
+    return {
+        "status": "success",
+        "data": f"Placeholder result for: {input_param}"
+    }
 
 @tool
-def example_tool_two(data: List[dict], operation_type: str) -> Dict:
-    """Example tool that performs operations on data."""
-    
-    if not data:
-        return {"error": "No data provided"}
-    
-    try:
-        # Your processing logic here
-        if operation_type == "summarize":
-            return {"summary": f"Processed {len(data)} items"}
-        elif operation_type == "analyze":
-            return {"analysis": "Analysis complete"}
-        else:
-            return {"result": "Operation completed"}
-    except Exception as e:
-        return {"error": f"Processing Error: {str(e)}"}
-
-@tool
-def get_context_info() -> str:
-    """Get contextual information for the agent."""
-    
-    try:
-        context_info = """
-        System Context Information:
-        - Context item 1
-        - Context item 2
-        - Context item 3
-        
-        Additional Guidelines:
-        - Guideline 1
-        - Guideline 2
-        """
-        return context_info
-    except Exception as e:
-        return f"Error retrieving context: {str(e)}"
+def placeholder_tool_two(data: List[dict], operation_type: str) -> Dict:
+    """Placeholder tool for future functionality."""
+    return {
+        "status": "success",
+        "operation": operation_type,
+        "items_processed": len(data) if data else 0
+    }   
 
 # Node functions - these get called when the graph executes
-def classify_input(state: AgentState) -> AgentState:
-    """Node 1: Classify the user's input to determine how to handle it."""
+
+# Node 1: Classify the query
+def classify_query(state: AgentState) -> AgentState:
+    """Classify whether the query is general or needs RAG"""
     messages = state["messages"]
     last_message = messages[-1].content
 
     classification_prompt = f"""
-    [CLASSIFICATION PROMPT PLACEHOLDER]
-    Classify this user input into one of these categories:
-    - "type_a": Description of type A inputs
-    - "type_b": Description of type B inputs  
-    - "general": General inputs
+    Classify this user query into one of these categories:
     
-    User input: "{last_message}"
+    1. "product_question" - Questions about products, documentation, technical details, 
+       specifications, features, how-to questions, troubleshooting, or anything that 
+       would benefit from searching product documentation.
     
-    Respond with just the category name.
+    2. "general" - General conversation, greetings, questions about yourself, 
+       math problems, coding help unrelated to specific products, or other topics 
+       that don't require product documentation.
+    
+    User query: "{last_message}"
+    
+    Respond with ONLY the category name (either "product_question" or "general").
     """
 
     response = llm.invoke([HumanMessage(content=classification_prompt)])
     classification = response.content.strip().lower()
 
-    # Validate the classification
-    if classification not in ["type_a", "type_b", "general"]:
+    # Validate the classification, default to general
+    if classification not in ["product_question", "general"]:
         classification = "general"
     
     state["classification"] = classification
     return state
 
-def process_type_a(state: AgentState) -> AgentState:
-    """Node 2a: Process Type A inputs using tools."""
-    messages = state["messages"]
-    last_message = messages[-1].content
-
-    # Get context information
-    context = get_context_info.invoke({})
-
-    processing_prompt = f"""
-    [TYPE A PROCESSING PROMPT PLACEHOLDER]
-    
-    Context: {context}
-    
-    User input: "{last_message}"
-    
-    Generate appropriate parameters for tool execution.
-    """
-
-    response = llm.invoke([HumanMessage(content=processing_prompt)])
-    tool_input = response.content.strip()
-
-    # Execute tool and store results
-    results = example_tool_one.invoke({"input_param": tool_input})
-    state["tool_results"] = [results]
-
-    return state
-
-def analyze_results(state: AgentState) -> AgentState:
-    """Node 3: Analyze results and generate insights."""
-    results = state["tool_results"]
-    query = state["messages"][-1].content
-
-    if not results or "error" in results[0]:
-        state["analysis"] = "Unable to process the request. Please try again."
-        return state
-    
-    analysis_prompt = f"""
-    [ANALYSIS PROMPT PLACEHOLDER]
-    
-    User asked: "{query}"
-    
-    Results: {results}
-    
-    Provide analysis focusing on:
-    - Key point 1
-    - Key point 2
-    - Key point 3
-    """
-
-    analysis_response = llm.invoke([HumanMessage(content=analysis_prompt)])
-    state["analysis"] = analysis_response.content
-
-    return state
-
-def handle_general(state: AgentState) -> AgentState:
-    """Node 2b: Handle general inputs without tool usage."""
+# Node 2a: Handle general chat
+def handle_general_chat(state: AgentState) -> AgentState:
+    """Handle general conversation without RAG"""
     messages = state["messages"]
 
-    system_prompt = """[GENERAL HANDLER PROMPT PLACEHOLDER]
-    You are a helpful assistant. 
-    Provide a helpful response to the user's input.
-    Keep responses concise and friendly."""
+    system_prompt = """You are a helpful AI assistant. Provide friendly, informative responses to general queries. Be conversational but concise."""
 
-    response = llm.invoke([
-        HumanMessage(content=system_prompt),
-        *messages
-    ])
+    response = llm.invoke([HumanMessage(content=system_prompt), *messages])
 
     state["final_response"] = response.content
     return state
 
-def format_response(state: AgentState) -> AgentState:
-    """Node 4: Format the final response for the user."""
-    
-    # Skip if we already have a final response
-    if state.get("final_response"):
-        return state
-    
-    # Format responses based on classification
-    if state["classification"] in ["type_a", "type_b"]:
-        analysis = state.get("analysis", "")
-        results = state.get("tool_results", [])
+# Node 2b: Handle product questions with RAG
+def handle_product_question(state: AgentState) -> AgentState:
+    """Use RAG to answer product related questions"""
+    messages = state["messages"]
+    query = state["messages"][-1].content
 
-        if results and "error" not in results[0]:
-            response = f"{analysis}\n\n"
-            # Add any additional formatting logic here
-            response += f"(Processed {len(results)} result(s))"
-        else:
-            response = analysis
+    # Get rag pipeline instance
+    rag = get_rag_pipeline()
 
-        state["final_response"] = response
+    # retrieve relevant context
+    context = rag.get_context_for_query(query, k=3)
+    state["rag_context"] = context
+
+    # Generate response using context
+    rag_prompt = f"""You are a helpful product support assistant.
+    Use the following context from product documentation to answer the user's question.
+    If the context doesn't contain relevant information, say so politely and offer general help.
     
+    Context from documentation:
+    {context}
+    
+    User question: {query}
+    
+    Provide a clear, accurate answer based on the documentation provided."""
+
+    response = llm.invoke([HumanMessage(content=rag_prompt)])
+    state["final_response"] = response.content
+
     return state
 
 # Define routing logic
-def route_after_classification(state: AgentState) -> Literal["process_type_a", "handle_general"]:
+def route_after_classification(state: AgentState) -> Literal["handle_general_chat", "handle_product_question"]:
     """Routing function: Decides which node to go to after classification."""
     
-    classification = state["classification"]
-    
-    if classification in ["type_a", "type_b"]:
-        return "process_type_a"
+    if state["classification"] == "product_question":
+        return "handle_product_question"
     else:
-        return "handle_general"
+        return "handle_general_chat"
 
 # Build the graph
 def create_agent_graph():
@@ -214,34 +134,26 @@ def create_agent_graph():
     graph = StateGraph(AgentState)
 
     # Add nodes to the graph
-    graph.add_node("classify_input", classify_input)
-    graph.add_node("process_type_a", process_type_a)
-    graph.add_node("analyze_results", analyze_results)
-    graph.add_node("handle_general", handle_general)
-    graph.add_node("format_response", format_response)
+    graph.add_node("classify_query", classify_query)
+    graph.add_node("handle_general_chat", handle_general_chat)
+    graph.add_node("handle_product_question", handle_product_question)
 
     # Define the edges between nodes
-    graph.set_entry_point("classify_input")
+    graph.set_entry_point("classify_query")
 
     # Conditional routing after classification
     graph.add_conditional_edges(
-        "classify_input",
+        "classify_query",
         route_after_classification,
         {
-            "process_type_a": "process_type_a",
-            "handle_general": "handle_general"
+            "handle_general_chat": "handle_general_chat",
+            "handle_product_question": "handle_product_question"
         }
     )
 
-    # Linear flow for type_a path
-    graph.add_edge("process_type_a", "analyze_results")
-    graph.add_edge("analyze_results", "format_response")
-
-    # General path goes straight to response formatting
-    graph.add_edge("handle_general", "format_response")
-
-    # All paths end at format_response
-    graph.add_edge("format_response", END)
+    # Define graph end
+    graph.add_edge("handle_general_chat", END)
+    graph.add_edge("handle_product_question", END)
 
     # Compile the graph
     return graph.compile()
@@ -256,7 +168,7 @@ async def process_query(user_query: str, conversation_history: List[Dict] = None
     
     Args:
         user_query: The user's natural language query
-        conversation_history: Previous messages in the conversation
+        conversation_history: Optional previous messages
     
     Returns:
         The agent's response as a string
@@ -277,8 +189,7 @@ async def process_query(user_query: str, conversation_history: List[Dict] = None
     initial_state = {
         "messages": messages,
         "classification": "",
-        "tool_results": [],
-        "analysis": "",
+        "rag_context": "",
         "final_response": ""
     }
 

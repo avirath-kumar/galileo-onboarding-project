@@ -215,7 +215,7 @@ class SimpleRAGPipeline:
             }
 
 # Single instnace for the RAG pipeline
-_rag_pipeline: Optional[SimpleRAGPipeline] = None # what does this syntax mean??
+_rag_pipeline: Optional[SimpleRAGPipeline] = None
 
 # Get or create the single RAG pipeline instance
 def get_rag_pipeline() -> SimpleRAGPipeline:
