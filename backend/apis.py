@@ -50,7 +50,7 @@ PRODUCTS = {
 }
 
 # Check inventory endpoint
-@api_app.get(f"/inventory/{product_id}")
+@api_app.get("/inventory/{product_id}")
 async def check_inventory(product_id: str):
     # normalize product ID
     product_id = product_id.lower().replace(" ", "-")
@@ -76,6 +76,7 @@ async def check_inventory(product_id: str):
         "product_id": product_id,
         "product_name": product["name"],
         "available_quantity": current_stock,
+        "price_per_unit": product["price"],
         "warehouse_location": product["warehouse"],
         "status": "in_stock" if current_stock > 10 else "low_stock" if current_stock > 0 else "out_of_stock"
     }
@@ -127,6 +128,6 @@ async def place_order(order: OrderRequest):
         total_price=round(product["price"] * order.quantity, 2)
     )
 
-    # run api on diff port
-    if __name__ == "__main__":
-        uvicorn.run(api_app, host="0.0.0.0", port=8001)
+# run api on diff port
+if __name__ == "__main__":
+    uvicorn.run(api_app, host="0.0.0.0", port=8001)

@@ -61,7 +61,7 @@ def place_order_api(product_name: str, quantity: int, customer_email: str = "cus
         response = requests.post("http://localhost:8081/order", json=order_data)
 
         if response.status_code == 200:
-            return response.json
+            return response.json()
         else:
             return {
                 "error": f"Failed to place order: {response.text}",
@@ -109,7 +109,7 @@ def classify_query(state: AgentState) -> AgentState:
     classification = response.content.strip().lower()
 
     # Validate the classification, default to general
-    valid_classifications = ["product_question", "general", "check_inventory", "place_order", "end_conversation"]:
+    valid_classifications = ["product_question", "general", "check_inventory", "place_order", "end_conversation"]
     if classification not in valid_classifications:
         classification = "general"
     
@@ -256,7 +256,7 @@ def place_order(state: AgentState) -> AgentState:
     try:
         order_info = json.loads(extraction.content.strip())
     except:
-        order_info = order_info = {"product": None, "quantity": None, "email": None}
+        order_info = {"product": None, "quantity": None, "email": None}
 
     # check what information is missing
     missing_info = []
