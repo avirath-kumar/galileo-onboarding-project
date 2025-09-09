@@ -72,6 +72,10 @@ def place_order_api(product_name: str, quantity: int, customer_email: str = "cus
             "error": f"Error connecting to order service: {str(e)}"
         }
 
+# Bind tools
+tools = [check_inventory_api, place_order_api]
+llm_with_tools = llm.bind_tools(tools)
+
 # Node functions - these get called when the graph executes
 
 # Node 1: Classify the query
