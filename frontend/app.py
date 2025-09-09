@@ -15,7 +15,7 @@ def check_backend_health():
 # Helper function for chat with backend
 def send_message(message):
     try:
-        response = requests.post("http://localhost:8000/chat", json={"message": message}, timeout=30)
+        response = requests.post("http://localhost:8000/chat", json={"message": message}, timeout=60)
         if response.status_code == 200:
             return response.json()['response']
         else:

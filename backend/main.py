@@ -63,14 +63,13 @@ async def chat(request: ChatRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
 
-# Initialize RAG on startup
+# Initialize RAG on startup (non-blocking)
 @app.on_event("startup")
 async def startup_event():
     try:
-        print("Initializing RAG pipeline...")
-        rag = get_rag_pipeline()
-        stats = rag.get_stats()
-        print(f"RAG pipeline ready with {stats['total_chunks']} chunks")
+        print("Starting RAG pipeline initialization (non-blocking)...")
+        # Don't block startup - RAG will initialize on first use
+        print("RAG pipeline will initialize on first query")
     except Exception as e:
         print(f"Warning: Could not initialize RAG pipeline: {str(e)}")
 

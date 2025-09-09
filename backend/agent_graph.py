@@ -33,7 +33,7 @@ def check_inventory_api(product_name: str) -> Dict:
     """Check inventory level for a specific product - atlas 108, nova 75, zephyr 87"""
     try:
         # call inventory api endpoint
-        response = requests.get(f"http://localhost:8001/inventory/{product_name}")
+        response = requests.get(f"http://localhost:8001/inventory/{product_name}", timeout=10)
 
         if response.status_code == 200:
             return response.json()
@@ -58,7 +58,7 @@ def place_order_api(product_name: str, quantity: int, customer_email: str = "cus
             "customer_email": customer_email
         }
 
-        response = requests.post("http://localhost:8081/order", json=order_data)
+        response = requests.post("http://localhost:8001/order", json=order_data, timeout=10)
 
         if response.status_code == 200:
             return response.json()
