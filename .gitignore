@@ -60,5 +60,6 @@ Thumbs.db
 *.log
 logs/
 
-# Static
+# Static / Vector DB
 static/
+chroma_db/
