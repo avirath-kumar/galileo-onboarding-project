@@ -134,7 +134,7 @@ class SimpleRAGPipeline:
                         ids=ids
                     )
 
-                    print(f" Added{len(chunks)} chunks from {pdf_path.name}")
+                    print(f" Added {len(chunks)} chunks from {pdf_path.name}")
                     total_chunks += len(chunks)
                 
                 # Update processed files record

@@ -42,7 +42,7 @@ class ConversationDB:
         """Create a new conversation session"""
         session_id = str(uuid.uuid4())
         conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor
+        cursor = conn.cursor()
 
         # for each session, create new session id, insert into db
         cursor.execute(
