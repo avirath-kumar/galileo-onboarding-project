@@ -6,6 +6,10 @@ from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 import uvicorn
 import os
+from datetime import datetime
+from galileo import galileo_context
+from galileo.handlers.langchain import GalileoAsyncCallback
+import uuid
 
 # Import agent
 from agent_graph import process_query
