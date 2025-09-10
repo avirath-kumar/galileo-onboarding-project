@@ -141,6 +141,7 @@ def handle_general_chat(state: AgentState) -> AgentState:
     response = llm.invoke([HumanMessage(content=system_prompt), *messages])
 
     state["final_response"] = response.content
+
     return state
 
 # Node 2b: Handle product questions with RAG
@@ -383,13 +384,11 @@ def create_agent_graph():
         }
     )
 
-    # Add looping logic - each handler goes back to continue / end decision
-    graph.add_conditional_edges("handle_general_chat", should_continue)
-    graph.add_conditional_edges("handle_product_question", should_continue)
-    graph.add_conditional_edges("check_inventory", should_continue)
-    graph.add_conditional_edges("place_order", should_continue)
-
-    # End conversation node goes straight to END
+    # Handle each chat message as discrete event - end after each node
+    graph.add_edge("handle_general_chat", END)
+    graph.add_edge("handle_product_question", END)
+    graph.add_edge("check_inventory", END)
+    graph.add_edge("place_order", END)
     graph.add_edge("handle_end_conversation", END)
 
     # Compile the graph
