@@ -6,14 +6,11 @@ from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 import uvicorn
 import os
-from datetime import datetime
-from galileo import galileo_context
-from galileo.handlers.langchain import GalileoAsyncCallback
-import uuid
 
-# Import agent
+# Import agent & database
 from agent_graph import process_query
 from rag_pipeline import get_rag_pipeline
+from database import get_db
 
 # Load env vars
 load_dotenv()
@@ -35,13 +32,20 @@ llm = ChatOpenAI(
     openai_api_key=os.getenv("OPENAI_API_KEY")
 )
 
-# Create classes for chat requests and responses
+# Create classes for requests and responses
+class SessionRequest(BaseModel):
+    pass
+
+class SessionResponse(BaseModel):
+    session_id: str
+
 class ChatRequest(BaseModel):
     message: str
-    conversation_history: Optional[List[Dict]] = None
+    session_id: Optional[str] = None
 
 class ChatResponse(BaseModel):
     response: str
+    session_id: str
 
 # Root endpoint
 @app.get("/")
@@ -53,19 +57,62 @@ def read_root():
 def health_check():
     return {"status": "healthy"}
 
+# Session endpoint
+@app.post("/session/new", response_model=SessionResponse)
+async def create_session():
+    """Create a new conversation session"""
+    db = get_db()
+    session_id = db.create_session()
+    return SessionResponse(session_id=session_id)
+
 # Chat endpoint - uses the agent, will automatically classify / route to rag if needed
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
+        db = get_db()
+
+        # create new session if not provided
+        if not request.session_id:
+            session_id = db.create_session()
+        else:
+            session_id = request.session_id
+            # verify session exists
+            if not db.session_exists(session_id):
+                raise HTTPException(status_code=404, detail="Session not found")
+
+        # get conversation history
+        conversation_history = db.get_session_messages(session_id)
+
+        # save user message
+        db.add_message(session_id, "user", request.message)
+
+        # process with agent
         response = await process_query(
             user_query=request.message,
-            conversation_history=request.conversation_history
+            conversation_history=conversation_history
         )
 
-        return ChatResponse(response=response)
+        # save assistant response
+        db.add_message(session_id, "assistant", response)
+
+        return ChatResponse(response=response, session_id=session_id)
     
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
+
+# get session history endpoint
+@app.get("/session/{session_id}/history")
+async def get_session_history(session_id: str):
+    """Get conversation history for a session"""
+    db = get_db()
+
+    if not db.session_exists(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    messages = db.get_session_messages(session_id)
+    return {"session_id": session_id, "messages": messages}
 
 # Initialize RAG on startup (non-blocking)
 @app.on_event("startup")

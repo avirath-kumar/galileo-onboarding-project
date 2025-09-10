@@ -1,4 +1,3 @@
-from itertools import product
 from typing import TypedDict, Annotated, List, Dict, Any, Literal
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_openai import ChatOpenAI
@@ -25,7 +24,6 @@ class AgentState(TypedDict):
     classification: str  # classify the input type - "general" or "product_question"
     rag_context: str
     final_response: str
-    continue_conversation: bool # track if agent should continue convo or not
 
 # Tool definitions - functions the agent can call
 @tool
@@ -34,7 +32,7 @@ def check_inventory_api(product_name: str) -> Dict:
     try:
         # call inventory api endpoint
         response = requests.get(f"http://localhost:8001/inventory/{product_name}", timeout=10)
-
+        
         if response.status_code == 200:
             return response.json()
         else:
@@ -84,44 +82,32 @@ def classify_query(state: AgentState) -> AgentState:
     messages = state["messages"]
     last_message = messages[-1].content
 
+    # Check conversation context to see if we're continuing an action
+    conversation_context = "\n".join([m.content for m in messages[-3:]]) # last 3 messages for context
+
     classification_prompt = f"""
-    Classify this user query into one of these categories:
+    Based on the conversation context, classify the user's intent:
     
-    1. "product_question" - Questions about products, documentation, technical details, 
-       specifications, features, how-to questions, troubleshooting, or anything that 
-       would benefit from searching product documentation.
+    1. "product_question" - Questions about products, documentation, specs, features, troubleshooting
+    2. "general" - General conversation, greetings, other topics
+    3. "check_inventory" - User wants to check stock/inventory (or responding with product name for inventory check)
+    4. "place_order" - User wants to buy/order (or providing order details like product/quantity)
     
-    2. "general" - General conversation, greetings, questions about yourself, 
-       math problems, coding help unrelated to specific products, or other topics 
-       that don't require product documentation.
+    Conversation context:
+    {conversation_context}
     
-    3. "check_inventory" - User wants to check stock/inventory/availability of a product.
-       Keywords: stock, inventory, available, in stock, how many
-    
-    4. "place_order" - User wants to buy/purchase/order a product.
-       Keywords: buy, order, purchase, want to get
-    
-    5. "end_conversation" - User indicates they're done or don't need more help.
-       Keywords: that's all, thank you, bye, done, no more questions
-    
-    User query: "{last_message}"
-    
-    Respond with ONLY the category name (either "product_question" or "general").
+    Respond with ONLY the category name.
     """
 
     response = llm.invoke([HumanMessage(content=classification_prompt)])
     classification = response.content.strip().lower()
 
     # Validate the classification, default to general
-    valid_classifications = ["product_question", "general", "check_inventory", "place_order", "end_conversation"]
+    valid_classifications = ["product_question", "general", "check_inventory", "place_order"]
     if classification not in valid_classifications:
         classification = "general"
     
     state["classification"] = classification
-    
-    # set continue flag based on classification - since this is bool
-    state["continue_conversation"] = classification != "end_conversation"
-
     return state
 
 # Node 2a: Handle general chat
@@ -131,24 +117,21 @@ def handle_general_chat(state: AgentState) -> AgentState:
 
     system_prompt = """You are a helpful AI assistant for Aurora Works.
     We sell three mechanical keyboards:
-    - Aurora Works Atlas 108 - Premium full-size mechanical keyboard
-    - Aurora Works Nova 75 - Compact 75% mechanical keyboard  
-    - Aurora Works Zephyr 87 - Tenkeyless mechanical keyboard
+    - Aurora Works Atlas 108 - Premium full-size mechanical keyboard ($899.99)
+    - Aurora Works Nova 75 - Compact 75% mechanical keyboard ($649.99)
+    - Aurora Works Zephyr 87 - Tenkeyless mechanical keyboard ($749.99)
     
-    Provide friendly, informative responses. Be conversational but concise.
-    After responding, ask if there's anything else you can help with."""
+    Be friendly and conversational. Ask if there's anything specific they'd like help with."""
 
     response = llm.invoke([HumanMessage(content=system_prompt), *messages])
-
     state["final_response"] = response.content
-
     return state
 
 # Node 2b: Handle product questions with RAG
 def handle_product_question(state: AgentState) -> AgentState:
     """Use RAG to answer product related questions"""
     messages = state["messages"]
-    query = state["messages"][-1].content
+    query = messages[-1].content
 
     # Get rag pipeline instance
     rag = get_rag_pipeline()
@@ -159,15 +142,14 @@ def handle_product_question(state: AgentState) -> AgentState:
 
     # Generate response using context
     rag_prompt = f"""You are a helpful product support assistant.
-    Use the following context from product documentation to answer the user's question.
-    If the context doesn't contain relevant information, say so politely and offer general help.
+    Use the following context to answer the user's question.
     
     Context from documentation:
     {context}
     
     User question: {query}
     
-    Provide a clear, accurate answer based on the documentation provided."""
+    Provide a clear answer based on the documentation."""
 
     response = llm.invoke([HumanMessage(content=rag_prompt)])
     state["final_response"] = response.content
@@ -180,19 +162,18 @@ def check_inventory(state: AgentState) -> AgentState:
     messages = state["messages"]
     last_message = messages[-1].content
 
-    # Extract product information from user's message
+    # Check if this is a follow-up with product info
     extract_prompt = f"""
-    The user wants to check inventory. Extract the product name from their message.
+    Extract the product name from the conversation. Look for:
+    - Atlas 108 (or Atlas)
+    - Nova 75 (or Nova)  
+    - Zephyr 87 (or Zephyr)
     
-    Our products are:
-    - Atlas 108 (or just Atlas)
-    - Nova 75 (or just Nova)
-    - Zephyr 87 (or just Zephyr)
+    Recent messages:
+    {' '.join([m.content for m in messages[-2:]])}
     
-    User message: "{last_message}"
-    
-    If you can identify the product, respond with JUST the product name (e.g., "Atlas 108").
-    If you cannot identify the product, respond with "ASK_PRODUCT".
+    If you can identify the product, respond with JUST the product name.
+    If not, respond with "ASK_PRODUCT".
     """
 
     # pass extraction prompt into LLM call
@@ -201,36 +182,33 @@ def check_inventory(state: AgentState) -> AgentState:
 
     if product_identified == "ASK_PRODUCT":
         # Ask user to specify the product
-        response = """I'd be happy to check inventory for you! Which product are you interested in?
+        response = """Which product would you like to check inventory for?
         
-We have three models available:
-- Aurora Works Atlas 108 (Full-size keyboard)
-- Aurora Works Nova 75 (Compact 75% keyboard)
-- Aurora Works Zephyr 87 (Tenkeyless keyboard)
+• Aurora Works Atlas 108 (Full-size)
+• Aurora Works Nova 75 (75% compact)
+• Aurora Works Zephyr 87 (Tenkeyless)
 
-Please specify which one you'd like to check."""
+Just tell me the product name or number."""
 
         state["final_response"] = response
-        state["messages"].append(AIMessage(content=response))
     else:
         # call the inventory api
         inventory_result = check_inventory_api.invoke({"product_name": product_identified})
 
         if "error" in inventory_result:
-            response = f"I encountered an issue checking inventory: {inventory_result['error']}\n\nWould you like me to try again or help you with something else?"
+            response = f"I couldn't check inventory: {inventory_result['error']}\n\nWould you like to try again?"
         else:
             # Format the inventory response nicely
-            response = f"""Here's the current inventory for {inventory_result['product_name']}:
+            response = f"""**{inventory_result['product_name']}** Inventory:
 
-📦 **Available Quantity**: {inventory_result['available_quantity']} units
-💰 **Price**: ${inventory_result['price_per_unit']}
-📍 **Warehouse**: {inventory_result['warehouse_location']}
-🔖 **Status**: {inventory_result['status'].replace('_', ' ').title()}
+• Available: {inventory_result['available_quantity']} units
+• Price: ${inventory_result['price_per_unit']}
+• Location: {inventory_result['warehouse_location']}
+• Status: {inventory_result['status'].replace('_', ' ').title()}
 
-Would you like to place an order for this product, or can I help you with anything else?"""
+Would you like to place an order for this product?"""
 
         state["final_response"] = response
-        state["messages"].append(AIMessage(content=response))
 
     return state
 
@@ -238,21 +216,18 @@ Would you like to place an order for this product, or can I help you with anythi
 def place_order(state: AgentState) -> AgentState:
     """Handle order placement with user interaction"""
     messages = state["messages"]
-    last_message = messages[-1].content
 
     # Extract order information from the user's message
     extract_prompt = f"""
-    The user wants to place an order. Extract the following information from their message:
+    Extract order information from the conversation:
     1. Product name (Atlas 108, Nova 75, or Zephyr 87)
-    2. Quantity (number of units)
-    3. Email address (if provided)
+    2. Quantity (number)
+    3. Email (if provided)
     
-    User message: "{last_message}"
+    Full conversation:
+    {' '.join([m.content for m in messages[-4:]])}
     
-    Respond in JSON format like this:
-    {{"product": "product_name_or_null", "quantity": number_or_null, "email": "email_or_null"}}
-    
-    Use null for any information not provided.
+    Respond in JSON: {{"product": "name_or_null", "quantity": number_or_null, "email": "email_or_null"}}
     """
 
     # make llm call with extraction prompt
@@ -275,23 +250,19 @@ def place_order(state: AgentState) -> AgentState:
         response = "I'd be happy to help you place an order! I just need a few details:\n\n"
 
         if "product" in missing_info:
-            response += """**Which product would you like to order?**
-- Aurora Works Atlas 108 (Full-size keyboard) - $899.99
-- Aurora Works Nova 75 (Compact 75% keyboard) - $649.99
-- Aurora Works Zephyr 87 (Tenkeyless keyboard) - $749.99\n\n"""
+            response += """**Which product?**
+• Atlas 108 - $899.99
+• Nova 75 - $649.99
+• Zephyr 87 - $749.99\n\n"""
 
         if "quantity" in missing_info:
-            response += "**How many units would you like to order?**\n\n"
+            response += "**How many units?**\n\n"
 
-        if not order_info.get("email"):
-            response += "**What email address should I use for the order?** (Optional - press enter to skip)\n"
-        
+        response += "Please provide these details."
         state["final_response"] = response
-        state["messages"].append(AIMessage(content=response))
     else:
         # all required info gathered, place order
         email = order_info.get("email", "customer@example.com")
-
         order_result = place_order_api.invoke({
             "product_name": order_info["product"],
             "quantity": order_info["quantity"],
@@ -299,17 +270,16 @@ def place_order(state: AgentState) -> AgentState:
         })
 
         if "error" in order_result:
-            response = f"I encountered an issue placing your order: {order_result['error']}\n\nWould you like me to try again with different details?"
+            response = f"Order failed: {order_result['error']}\n\nWould you like to try again?"
         else:
             # format the order confirmation nicely
-            response = f"""✅ **Order Confirmed!**
+            response = f"""**Order Confirmed!**
 
 Here are your order details:
 - **Order ID**: {order_result['order_id']}
 - **Product**: {order_result['product_name']}
 - **Quantity**: {order_result['quantity']} units
 - **Total Price**: ${order_result['total_price']}
-- **Status**: {order_result['status'].title()}
 - **Estimated Delivery**: {order_result['estimated_delivery']}
 
 Your order has been successfully placed! You should receive a confirmation email shortly.
@@ -317,41 +287,21 @@ Your order has been successfully placed! You should receive a confirmation email
 Is there anything else I can help you with today?"""
 
         state["final_response"] = response
-        state["messages"].append(AIMessage(content=response))
 
-    return state
-
-
-# Node 2e: Handle end of conversation
-def handle_end_conversation(state: AgentState) -> AgentState:
-    """handle when user wants to end conversation"""
-    response = "Thank you for choosing Aurora Works! Have a great day, and feel free to come back anytime if you need assistance with our mechanical keyboards. 👋"
-    state["final_response"] = response
-    state["messages"].append(AIMessage(content=response))
-    state["continue_conversation"] = False
     return state
 
 # Define routing logic
-def route_after_classification(state: AgentState) -> Literal["handle_general_chat", "handle_product_question", "check_inventory", "place_order", "handle_end_conversation"]:
+def route_after_classification(state: AgentState) -> Literal["handle_general_chat", "handle_product_question", "check_inventory", "place_order"]:
     """Routing function: Decides which node to go to after classification."""
     
     classification_map = {
             "general": "handle_general_chat",
             "product_question": "handle_product_question", 
             "check_inventory": "check_inventory",
-            "place_order": "place_order",
-            "end_conversation": "handle_end_conversation"
+            "place_order": "place_order"
         }
 
     return classification_map.get(state["classification"], "handle_general_chat")
-
-# Define whether to continue or end
-def should_continue(state: AgentState) -> Literal["classify_query", END]:
-    """Decide whether to continue conversation or end it"""
-    if state.get("continue_conversation", True):
-        return "classify_query"
-    else:
-        return END
 
 # Build the graph
 def create_agent_graph():
@@ -366,7 +316,6 @@ def create_agent_graph():
     graph.add_node("handle_product_question", handle_product_question)
     graph.add_node("check_inventory", check_inventory)
     graph.add_node("place_order", place_order)
-    graph.add_node("handle_end_conversation", handle_end_conversation)
 
     # Define the edges between nodes
     graph.set_entry_point("classify_query")
@@ -379,8 +328,7 @@ def create_agent_graph():
             "handle_general_chat": "handle_general_chat",
             "handle_product_question": "handle_product_question",
             "check_inventory": "check_inventory",
-            "place_order": "place_order",
-            "handle_end_conversation": "handle_end_conversation"
+            "place_order": "place_order"
         }
     )
 
@@ -389,7 +337,6 @@ def create_agent_graph():
     graph.add_edge("handle_product_question", END)
     graph.add_edge("check_inventory", END)
     graph.add_edge("place_order", END)
-    graph.add_edge("handle_end_conversation", END)
 
     # Compile the graph
     return graph.compile()
@@ -399,18 +346,10 @@ agent = create_agent_graph()
 
 # Helper function for easy invocation
 async def process_query(user_query: str, conversation_history: List[Dict] = None):
-    """
-    Process a user query through the agent.
-    
-    Args:
-        user_query: The user's natural language query
-        conversation_history: Optional previous messages
-    
-    Returns:
-        The agent's response as a string
-    """
+    """Process a user query through the agent."""
     # Build message history
     messages = []
+    
     if conversation_history:
         for msg in conversation_history:
             if msg["role"] == "user":
@@ -426,8 +365,7 @@ async def process_query(user_query: str, conversation_history: List[Dict] = None
         "messages": messages,
         "classification": "",
         "rag_context": "",
-        "final_response": "",
-        "continue_conversation": True
+        "final_response": ""
     }
 
     # Run the agent

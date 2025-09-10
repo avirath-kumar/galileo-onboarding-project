@@ -63,3 +63,8 @@ logs/
 # Static / Vector DB
 static/
 chroma_db/
+
+# SQLite database
+*.db
+*.sqlite
+*sqlite3
