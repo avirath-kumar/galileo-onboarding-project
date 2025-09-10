@@ -1,4 +1,5 @@
-from typing import TypedDict, Annotated, List, Dict, Any, Literal
+from itertools import product
+from typing import Optional, TypedDict, Annotated, List, Dict, Any, Literal
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
@@ -8,6 +9,7 @@ from dotenv import load_dotenv
 import os
 import requests
 import json
+import re
 
 # import local rag pipeline as library
 from rag_pipeline import get_rag_pipeline
@@ -24,6 +26,10 @@ class AgentState(TypedDict):
     classification: str  # classify the input type - "general" or "product_question"
     rag_context: str
     final_response: str
+    # additional state parameters to help track multi turn interactions
+    current_action: Optional[str]
+    collected_info: Optional[Dict] # store collected order / inventory info
+    awaiting_info: Optional[List[str]] # track which info we're waiting for
 
 # Tool definitions - functions the agent can call
 @tool
@@ -74,6 +80,45 @@ def place_order_api(product_name: str, quantity: int, customer_email: str = "cus
 tools = [check_inventory_api, place_order_api]
 llm_with_tools = llm.bind_tools(tools)
 
+# Helper function to normalize product names
+def normalize_product_name(text: str) -> Optional[str]:
+    """Extract and normalize product name from text"""
+    text_lower = text.lower()
+
+    # map common variations to standard names
+    if "atlas" in text_lower or "108" in text_lower:
+        return "atlas-108"
+    elif "nova" in text_lower or "75" in text_lower:
+        return "nova-75"
+    elif "zephyr" in text_lower or "87" in text_lower:
+        return "zephyr-87"
+    
+    return None
+
+# Helper function to extract quantity
+def extract_quantity(text: str) -> Optional[int]:
+    """Extract quantity from text"""
+    # Look for patterns like "2", "two", "2 units", etc
+    patterns = [
+        r'\b(\d+)\s*(?:units?|items?|pieces?)?\b',
+        r'\b(one|two|three|four|five|six|seven|eight|nine|ten)\b'
+    ]
+
+    number_words = {
+        'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+        'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10
+    }
+
+    for pattern in patterns:
+        match = re.search(pattern, text.lower())
+        if match:
+            value = match.group(1)
+            if value.isdigit():
+                return int(value)
+            elif value in number_words[value]
+
+    return None
+
 # Node functions - these get called when the graph executes
 
 # Node 1: Classify the query
@@ -82,19 +127,45 @@ def classify_query(state: AgentState) -> AgentState:
     messages = state["messages"]
     last_message = messages[-1].content
 
-    # Check conversation context to see if we're continuing an action
+    # check if we have an ongoing action from previous state
+    current_action = state.get("current_action")
+    collected_info = state.get("collected_info", {})
+
+    # if we're in the middle of an action, check if user is providing requested info
+    if current_action in ["place order", "check inventory"]:
+        # check if message contains info we're looking for
+        product = normalize_product_name(last_message)
+        quantity = extract_quantity(last_message)
+
+        if product or quantity:
+            # user is providing info for ongoing action
+            state["classification"] = current_action
+
+            # update collected info
+            if product:
+                collected_info["product"] = product
+            if quantity:
+                collected_info["quantity"] = quantity
+            state["collected_info"] = collected_info
+    
+    # otherwise, do fresh classification
     conversation_context = "\n".join([m.content for m in messages[-3:]]) # last 3 messages for context
 
     classification_prompt = f"""
-    Based on the conversation context, classify the user's intent:
+    Classify the user's intent based on this message: "{last_message}"
     
-    1. "product_question" - Questions about products, documentation, specs, features, troubleshooting
-    2. "general" - General conversation, greetings, other topics
-    3. "check_inventory" - User wants to check stock/inventory (or responding with product name for inventory check)
-    4. "place_order" - User wants to buy/order (or providing order details like product/quantity)
+    Categories:
+    1. "product_question" - Questions about product specs, features, documentation, troubleshooting
+    2. "check_inventory" - User wants to check stock/availability
+    3. "place_order" - User wants to buy/purchase/order a product
+    4. "general" - Greetings, general chat, other topics
     
-    Conversation context:
-    {conversation_context}
+    Look for keywords:
+    - Inventory/stock/available/in stock → check_inventory
+    - Buy/order/purchase/want to get → place_order
+    - Specs/features/documentation/how does/troubleshooting → product_question
+    
+    Recent context: {conversation_context}
     
     Respond with ONLY the category name.
     """
@@ -108,6 +179,17 @@ def classify_query(state: AgentState) -> AgentState:
         classification = "general"
     
     state["classification"] = classification
+    
+    # reset action tracking for new intents
+    if classification in ["check_inventory", "place_order"]:
+        state["current_action"] = classification
+        state["collected_info"] = {}
+        state["awaiting_info"] = []
+    else:
+        state["current_action"] = None
+        state["collected_info"] = {}
+        state["awaiting_info"] = []
+    
     return state
 
 # Node 2a: Handle general chat
@@ -121,10 +203,20 @@ def handle_general_chat(state: AgentState) -> AgentState:
     - Aurora Works Nova 75 - Compact 75% mechanical keyboard ($649.99)
     - Aurora Works Zephyr 87 - Tenkeyless mechanical keyboard ($749.99)
     
-    Be friendly and conversational. Ask if there's anything specific they'd like help with."""
+    Be friendly and conversational. You can help with:
+    - Answering product questions
+    - Checking inventory
+    - Placing orders
+    
+    Ask the user what they would like help with today"""
 
     response = llm.invoke([HumanMessage(content=system_prompt), *messages])
     state["final_response"] = response.content
+    
+    # clear any ongoing action
+    state["current_action"] = None
+    state["collected_info"] = {}
+    
     return state
 
 # Node 2b: Handle product questions with RAG
@@ -141,7 +233,7 @@ def handle_product_question(state: AgentState) -> AgentState:
     state["rag_context"] = context
 
     # Generate response using context
-    rag_prompt = f"""You are a helpful product support assistant.
+    rag_prompt = f"""You are a helpful product support assistant for Aurora Works.
     Use the following context to answer the user's question.
     
     Context from documentation:
@@ -149,10 +241,15 @@ def handle_product_question(state: AgentState) -> AgentState:
     
     User question: {query}
     
-    Provide a clear answer based on the documentation."""
+    Provide a clear, helpful answer based on the documentation.
+    If you mention a product, you can also offer to check inventory or help place an order."""
 
     response = llm.invoke([HumanMessage(content=rag_prompt)])
     state["final_response"] = response.content
+
+    # Clear any ongoing action
+    state["current_action"] = None
+    state["collected_info"] = {}
 
     return state
 
@@ -161,133 +258,173 @@ def check_inventory(state: AgentState) -> AgentState:
     "Inventory checking node with user interaction to ensure api params are received through chat w. user"
     messages = state["messages"]
     last_message = messages[-1].content
+    collected_info = state.get("collected_info", {})
 
-    # Check if this is a follow-up with product info
-    extract_prompt = f"""
-    Extract the product name from the conversation. Look for:
-    - Atlas 108 (or Atlas)
-    - Nova 75 (or Nova)  
-    - Zephyr 87 (or Zephyr)
+    # try to extract product from current message if not already collected
+    if "product" not in collected_info:
+        product = normalize_product_name(last_message)
+        if product:
+            collected_info["product"] = product
     
-    Recent messages:
-    {' '.join([m.content for m in messages[-2:]])}
+    # check convo history for product mentions
+    if "product" not in collected_info:
+        for msg in messages[-3:]:
+            product = normalize_product_name(msg.content)
+            if product:
+                collected_info["product"] = product
+                break
     
-    If you can identify the product, respond with JUST the product name.
-    If not, respond with "ASK_PRODUCT".
-    """
+    state["collected_info"] = collected_info
 
-    # pass extraction prompt into LLM call
-    extraction = llm.invoke([HumanMessage(content=extract_prompt)])
-    product_identified = extraction.content.strip()
-
-    if product_identified == "ASK_PRODUCT":
-        # Ask user to specify the product
+    if "product" not in collected_info:
+        # ask for product specification
         response = """Which product would you like to check inventory for?
         
-• Aurora Works Atlas 108 (Full-size)
-• Aurora Works Nova 75 (75% compact)
-• Aurora Works Zephyr 87 (Tenkeyless)
+• **Atlas 108** - Full-size mechanical keyboard
+• **Nova 75** - 75% compact keyboard  
+• **Zephyr 87** - Tenkeyless keyboard
 
-Just tell me the product name or number."""
+Just tell me the product name or model number."""
 
         state["final_response"] = response
+        state["current_action"] = "check_inventory"
     else:
-        # call the inventory api
-        inventory_result = check_inventory_api.invoke({"product_name": product_identified})
+        # we have the product, check inventory
+        product_name = collected_info["product"]
+        inventory_result = check_inventory_api.invoke({"product_name": product_name})
 
         if "error" in inventory_result:
             response = f"I couldn't check inventory: {inventory_result['error']}\n\nWould you like to try again?"
+            state["current_action"] = None
         else:
-            # Format the inventory response nicely
-            response = f"""**{inventory_result['product_name']}** Inventory:
+            # format the inventory response
+            response = f"""**{inventory_result['product_name']}** Inventory Status:
 
-• Available: {inventory_result['available_quantity']} units
-• Price: ${inventory_result['price_per_unit']}
-• Location: {inventory_result['warehouse_location']}
-• Status: {inventory_result['status'].replace('_', ' ').title()}
+• **Available:** {inventory_result['available_quantity']} units
+• **Price:** ${inventory_result['price_per_unit']}
+• **Warehouse:** {inventory_result['warehouse_location']}
+• **Status:** {inventory_result['status'].replace('_', ' ').title()}
 
-Would you like to place an order for this product?"""
+Would you like to place an order for this product? Just let me know how many units you'd like."""
+
+            # set up for potential order
+            state["current_action"] = "place_order"
+            state["collected_info"] = {"product": product_name} # carry forward product info
 
         state["final_response"] = response
-
+    
     return state
 
 # Node 2d: place order
 def place_order(state: AgentState) -> AgentState:
     """Handle order placement with user interaction"""
     messages = state["messages"]
+    last_message = messages[-1].content
+    collected_info = state.get("collected_info", {})
 
-    # Extract order information from the user's message
-    extract_prompt = f"""
-    Extract order information from the conversation:
-    1. Product name (Atlas 108, Nova 75, or Zephyr 87)
-    2. Quantity (number)
-    3. Email (if provided)
+    # try to extract info from current message
+    if "product" not in collected_info:
+        product = normalize_product_name(last_message)
+        if product:
+            collected_info["product"] = product
     
-    Full conversation:
-    {' '.join([m.content for m in messages[-4:]])}
+    if "quantity" not in collected_info:
+        quantity = extract_quantity(last_message)
+        if quantity:
+            collected_info["quantity"] = quantity
+
+    # check recent convo for missed info
+    if "product" not in collected_info or "quantity" not in collected_info:
+        for msg in messages[-3:]:
+            if "product" not in collected_info:
+                product = normalize_product_name(msg.content)
+                if product:
+                    collected_info["product"] = product
+            
+            if "quantity" not in collected_info:
+                quantity = extract_quantity(msg.content)
+                if quantity:
+                    collected_info["quantity"] = quantity
+
+    # extract email if provided
+    email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+    email_match = re.search(email_pattern, last_message)
+    if email_match:
+        collected_info["email"] = email_match.group(0)
     
-    Respond in JSON: {{"product": "name_or_null", "quantity": number_or_null, "email": "email_or_null"}}
-    """
-
-    # make llm call with extraction prompt
-    extraction = llm.invoke([HumanMessage(content=extract_prompt)])
-
-    try:
-        order_info = json.loads(extraction.content.strip())
-    except:
-        order_info = {"product": None, "quantity": None, "email": None}
-
     # check what information is missing
     missing_info = []
-    if not order_info.get("product"):
+    if product not in collected_info:
         missing_info.append("product")
-    if not order_info.get("quantity"):
+    if quantity not in collected_info:
         missing_info.append("quantity")
-
+    
     if missing_info:
-        # ask for missing info
-        response = "I'd be happy to help you place an order! I just need a few details:\n\n"
+        # build contextual request for missing info
+        response = "I'd be happy to help you place your order! "
+        
+        if "product" in collected_info:
+            product_display = collected_info["product"].replace("-", " ").title()
+            response += f"You've selected the **{product_display}**. "
 
-        if "product" in missing_info:
-            response += """**Which product?**
-• Atlas 108 - $899.99
-• Nova 75 - $649.99
-• Zephyr 87 - $749.99\n\n"""
+        if "quantity" in collected_info:
+            response += f"Quantity: **{collected_info['quantity']} units**. "
 
-        if "quantity" in missing_info:
-            response += "**How many units?**\n\n"
+        response += "\n\nI just need"
 
-        response += "Please provide these details."
+        if "product" in missing_info and "quantity" in missing_info:
+            response += """ to know:
+
+**1. Which product?**
+• Atlas 108 ($899.99)
+• Nova 75 ($649.99)
+• Zephyr 87 ($749.99)
+
+**2. How many units?**
+
+Please provide these details."""
+
+        elif "quantity" in missing_info:
+            response += " to know **how many units** you'd like to order."
         state["final_response"] = response
+        state["current_action"] = "place_order"
     else:
-        # all required info gathered, place order
-        email = order_info.get("email", "customer@example.com")
+        # We have all required info, place the order
+        email = collected_info.get("email", "customer@example.com")
+        
         order_result = place_order_api.invoke({
-            "product_name": order_info["product"],
-            "quantity": order_info["quantity"],
+            "product_name": collected_info["product"],
+            "quantity": collected_info["quantity"],
             "customer_email": email
         })
-
+        
         if "error" in order_result:
-            response = f"Order failed: {order_result['error']}\n\nWould you like to try again?"
+            response = f"I encountered an issue placing your order: {order_result['error']}\n\nWould you like to try again?"
+            state["current_action"] = None
+            state["collected_info"] = {}
         else:
-            # format the order confirmation nicely
-            response = f"""**Order Confirmed!**
+            # Format the order confirmation
+            response = f""" **Order Confirmed!**
 
-Here are your order details:
-- **Order ID**: {order_result['order_id']}
-- **Product**: {order_result['product_name']}
-- **Quantity**: {order_result['quantity']} units
-- **Total Price**: ${order_result['total_price']}
-- **Estimated Delivery**: {order_result['estimated_delivery']}
+**Order Details:**
+━━━━━━━━━━━━━━━━━━━━━
+• **Order ID:** `{order_result['order_id']}`
+• **Product:** {order_result['product_name']}
+• **Quantity:** {order_result['quantity']} units
+• **Total Price:** ${order_result['total_price']}
+• **Estimated Delivery:** {order_result['estimated_delivery']}
+━━━━━━━━━━━━━━━━━━━━━
 
-Your order has been successfully placed! You should receive a confirmation email shortly.
+Your order has been successfully placed! You'll receive a confirmation email shortly.
 
 Is there anything else I can help you with today?"""
-
+            
+            # Clear state after successful order
+            state["current_action"] = None
+            state["collected_info"] = {}
+        
         state["final_response"] = response
-
+    
     return state
 
 # Define routing logic
@@ -359,6 +496,33 @@ async def process_query(user_query: str, conversation_history: List[Dict] = None
     
     # Add current query
     messages.append(HumanMessage(content=user_query))
+
+    # Try to recover state from conversation history
+    current_action = None
+    collected_info = {}
+
+    # check if last assistant message indicates we're waiting for info
+    if conversation_history and len(conversation_history) > 0:
+        last_assistant_msg = None
+        for msg in reversed(conversation_history):
+            if msg["role"] == "assistant":
+                last_assistant_msg = msg["content"]
+                break
+
+        if last_assistant_msg:
+            # Check for patterns indicating ongoing actions
+            if "which product" in last_assistant_msg.lower() and "inventory" in last_assistant_msg.lower():
+                current_action = "check_inventory"
+            elif "which product" in last_assistant_msg.lower() and "order" in last_assistant_msg.lower():
+                current_action = "place_order"
+            elif "how many units" in last_assistant_msg.lower():
+                current_action = "place_order"
+                # Try to find product from history
+                for msg in conversation_history[-4:]:
+                    product = normalize_product_name(msg["content"])
+                    if product:
+                        collected_info["product"] = product
+                        break
 
     # Create initial state
     initial_state = {
