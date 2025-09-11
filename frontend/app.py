@@ -4,6 +4,7 @@ import json
 import os
 import uuid
 from dotenv import load_dotenv
+import datetime
 
 from galileo import galileo_context
 from galileo.handlers.langchain import GalileoCallback
@@ -15,8 +16,6 @@ if "session_id" not in st.session_state:
     st.session_state.session_id = None
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "galileo_session_started" not in st.session_state: # session mgmt for galileo - DOUBLE CHECK!!!!
-    st.session_state.galileo_session_started = False
 
 # Helper function for backend health check
 def check_backend_health():
@@ -32,27 +31,6 @@ def send_message(message, session_id=None):
         payload = {"message": message}
         if session_id:
             payload["session_id"] = session_id
-        
-        # Start Galileo session if not already started
-        galileo_session_id = None
-        if not st.session_state.galileo_session_started:
-            try:
-                # Use session_id as external_id for better tracking
-                external_id = session_id if session_id else str(uuid.uuid4())
-                galileo_session_id = galileo_context.start_session(
-                    name="Aurora Works Product Agent", 
-                    external_id=external_id
-                )
-                st.session_state.galileo_session_started = True
-                st.session_state.galileo_session_id = galileo_session_id
-            except Exception as e:
-                st.warning(f"Failed to start Galileo session: {e}")
-        else:
-            galileo_session_id = st.session_state.get("galileo_session_id")
-        
-        # Add Galileo session context to payload
-        if galileo_session_id:
-            payload["galileo_session_id"] = galileo_session_id
             
         response = requests.post("http://localhost:8000/chat", json=payload, timeout=60)
         if response.status_code == 200:
@@ -64,6 +42,11 @@ def send_message(message, session_id=None):
 
 # Main frontend page function
 def main():
+    # Start Galileo session if not already started
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    session_name = f"Aurora Works - {current_time}"
+    galileo_context.start_session(name=session_name, external_id=uuid(uuid.uuid4()))
+    
     st.title("💻 Aurora Works Product Agent")
     
     # Sidebar for session mgmt
@@ -72,18 +55,10 @@ def main():
 
         # wipe session id, message history when new convo button pressed
         if st.button("New Conversation"):
-            # end current galileo session if active
-            if st.session_state.galileo_session_started:
-                try:
-                    galileo_context.end_session()
-                except:
-                    pass
             
             # reset session state
             st.session_state.session_id = None
             st.session_state.messages = []
-            st.session_state.galileo_session_started = False
-            st.session_state.galileo_session_id = None
             st.rerun()
         
         # session info

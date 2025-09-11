@@ -17,7 +17,7 @@ from rag_pipeline import get_rag_pipeline
 # Load environment variables from .env file
 load_dotenv()
 
-# Initialize the LLM (base instance without callbacks)
+# Initialize the LLM
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=os.getenv("OPENAI_API_KEY"))
 
 # Define the agent state structure
@@ -127,7 +127,6 @@ def classify_query(state: AgentState) -> AgentState:
     """Classify whether the query is general or needs RAG"""
     messages = state["messages"]
     last_message = messages[-1].content
-    callbacks = state.get("callbacks", [])
 
     # check if we have an ongoing action from previous state
     current_action = state.get("current_action")
@@ -171,15 +170,8 @@ def classify_query(state: AgentState) -> AgentState:
     
     Respond with ONLY the category name.
     """
-
-    # Use the shared LLM with callbacks from state
-    callbacks = state.get("callbacks", [])
-    if callbacks:
-        llm_with_callbacks = llm.with_config({"callbacks": callbacks})
-    else:
-        llm_with_callbacks = llm
     
-    response = llm_with_callbacks.invoke([HumanMessage(content=classification_prompt)])
+    response = llm.invoke([HumanMessage(content=classification_prompt)])
     classification = response.content.strip().lower()
 
     # Validate the classification, default to general
@@ -218,15 +210,8 @@ def handle_general_chat(state: AgentState) -> AgentState:
     - Placing orders
     
     Ask the user what they would like help with today"""
-
-    # Use the shared LLM with callbacks from state
-    callbacks = state.get("callbacks", [])
-    if callbacks:
-        llm_with_callbacks = llm.with_config({"callbacks": callbacks})
-    else:
-        llm_with_callbacks = llm
     
-    response = llm_with_callbacks.invoke([HumanMessage(content=system_prompt), *messages])
+    response = llm.invoke([HumanMessage(content=system_prompt), *messages])
     state["final_response"] = response.content
     
     # clear any ongoing action
@@ -259,15 +244,8 @@ def handle_product_question(state: AgentState) -> AgentState:
     
     Provide a clear, helpful answer based on the documentation.
     If you mention a product, you can also offer to check inventory or help place an order."""
-
-    # Use the shared LLM with callbacks from state
-    callbacks = state.get("callbacks", [])
-    if callbacks:
-        llm_with_callbacks = llm.with_config({"callbacks": callbacks})
-    else:
-        llm_with_callbacks = llm
     
-    response = llm_with_callbacks.invoke([HumanMessage(content=rag_prompt)])
+    response = llm.invoke([HumanMessage(content=rag_prompt)])
     state["final_response"] = response.content
 
     # Clear any ongoing action
@@ -561,11 +539,7 @@ async def process_query(user_query: str, conversation_history: List[Dict] = None
         "awaiting_info": []
     }
 
-    # Add callbacks to state for propagation through all nodes
-    if callbacks:
-        initial_state["callbacks"] = callbacks
-
     # Run the agent
-    result = await agent.ainvoke(initial_state)
+    result = await agent.ainvoke(initial_state) # callback should be right here
     
     return result["final_response"]
