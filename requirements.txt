@@ -21,3 +21,6 @@ tiktoken==0.11.0  # Latest stable version
 # Additional utilities
 pydantic==2.10.4  # Latest v2 stable (required for FastAPI)
 numpy==1.26.4  # Latest stable for Python 3.9+
+
+# Galileo
+galileo

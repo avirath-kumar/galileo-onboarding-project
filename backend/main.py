@@ -90,6 +90,7 @@ async def chat(request: ChatRequest):
         response = await process_query(
             user_query=request.message,
             conversation_history=conversation_history
+            # ADD GALILEO CALLBACK HERE??
         )
 
         # save assistant response

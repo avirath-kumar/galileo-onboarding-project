@@ -1,6 +1,12 @@
 import streamlit as st
 import requests
 import json
+import os
+import uuid
+from dotenv import load_dotenv
+
+from galileo import galileo_context
+from galileo.handlers.langchain import GalileoCallback
 
 st.set_page_config(page_title="Aurora Works Product Agent", page_icon="💻", layout="wide")
 
@@ -9,6 +15,8 @@ if "session_id" not in st.session_state:
     st.session_state.session_id = None
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "galileo_session_started" not in st.session_state: # session mgmt for galileo - DOUBLE CHECK!!!!
+    st.session_state.galileo_session_started = False
 
 # Helper function for backend health check
 def check_backend_health():
@@ -24,6 +32,10 @@ def send_message(message, session_id=None):
         payload = {"message": message}
         if session_id:
             payload["session_id"] = session_id
+
+        # galileo session id
+        if st.session_state.galileo_session_started:
+            payload["galileo_session_id"] = st.session_state.get("galileo_external_id")
         
         response = requests.post("http://localhost:8000/chat", json=payload, timeout=60)
         if response.status_code == 200:
@@ -32,6 +44,31 @@ def send_message(message, session_id=None):
             return f"Error: {response.status_code}"
     except Exception as e:
         return f"Error: {str(e)}"
+
+# Initialize a galileo session
+def init_galileo_session():
+    if not st.session_state.galileo_session_started:
+        try:
+            # generate a unique external id for this session
+            external_id = f"aurora-{str(uuid.uuid4())[:8]}"
+            st.session_state.galileo_external_id = external_id
+
+            # start galileo session
+            galileo_context.start_session(
+                name="Aurora Works Product Agent",
+                external_id=external_id,
+                metadata={
+                    "app": "aurora_works",
+                    "version": "1.0.0",
+                    "environment": os.getenv("ENVIRONMENT", "development")
+                }
+            )
+            st.session_state.galileo_session_started = True
+            return True
+        except Exception as e:
+            st.error(f"Failed to initialize Galileo: {str(e)}")
+            return False
+    return st.session_state.galileo_session_started
 
 # Main frontend page function
 def main():
@@ -43,10 +80,19 @@ def main():
 
         # wipe session id, message history when new convo button pressed
         if st.button("New Conversation"):
+            # end current galileo session if active
+            if st.session_state.galileo_session_started:
+                try:
+                    galileo_context.end_session()
+                except:
+                    pass
+            
+            # reset session state
             st.session_state.session_id = None
             st.session_state.messages = []
             st.rerun()
         
+        # session info
         if st.session_state.session_id:
             st.success(f"Session: {st.session_state.session_id[:8]}...")
         else:

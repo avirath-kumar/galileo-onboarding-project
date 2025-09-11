@@ -1,3 +1,4 @@
+from gc import callbacks
 from itertools import product
 from typing import Optional, TypedDict, Annotated, List, Dict, Any, Literal
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
@@ -18,7 +19,7 @@ from rag_pipeline import get_rag_pipeline
 load_dotenv()
 
 # Initialize the LLM
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=os.getenv("OPENAI_API_KEY"))
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=os.getenv("OPENAI_API_KEY"), callbacks=callbacks) # TO DO: CAN I PUT LLM CALLBACK HERE
 
 # Define the agent state structure
 class AgentState(TypedDict):
@@ -127,6 +128,7 @@ def classify_query(state: AgentState) -> AgentState:
     """Classify whether the query is general or needs RAG"""
     messages = state["messages"]
     last_message = messages[-1].content
+    callbacks = state.get("callbacks", [])
 
     # check if we have an ongoing action from previous state
     current_action = state.get("current_action")
@@ -485,8 +487,8 @@ def create_agent_graph():
 # Create a single instance of the agent
 agent = create_agent_graph()
 
-# Helper function for easy invocation
-async def process_query(user_query: str, conversation_history: List[Dict] = None):
+# Helper function for easy invocation. callbacks: List of callbacks for monitoring
+async def process_query(user_query: str, conversation_history: List[Dict] = None, callbacks: List = None):
     """Process a user query through the agent."""
     # Build message history
     messages = []
@@ -533,8 +535,24 @@ async def process_query(user_query: str, conversation_history: List[Dict] = None
         "messages": messages,
         "classification": "",
         "rag_context": "",
-        "final_response": ""
+        "final_response": "",
+        "current_action": current_action,
+        "collected_info": collected_info,
+        "awaiting_info": []
     }
+
+    # if we have callbacks, create a new agent instance with them
+    if callbacks:
+        # re initialize llm with callbacks for this request
+        llm_with_callbacks = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0,
+            opneai_api_key=os.getenv("OPENAI_API_KEY"),
+            callbacks=callbacks # TO DO: CAN I MOVE THIS OUT TO THE TOP
+        )
+
+        # create temporary agent with callbacks
+        initial_state["callbacks"] = callbacks
 
     # Run the agent
     result = await agent.ainvoke(initial_state)
