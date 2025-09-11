@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import uvicorn
 import os
 from galileo.handlers.langchain import GalileoCallback
+import galileo
 
 # Import agent & database
 from agent_graph import process_query
@@ -15,6 +16,14 @@ from database import get_db
 
 # Load env vars
 load_dotenv()
+
+# Initialize Galileo
+galileo.configure(
+    api_key=os.getenv("GALILEO_API_KEY"),
+    project=os.getenv("GALILEO_PROJECT"),
+    log_stream=os.getenv("GALILEO_LOG_STREAM"),
+    console_url=os.getenv("GALILEO_CONSOLE_URL")
+)
 
 # Initialize FastAPI app
 app = FastAPI(title="Agent API", version="1.0.0")
@@ -43,6 +52,7 @@ class SessionResponse(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
+    galileo_session_id: Optional[str] = None
 
 class ChatResponse(BaseModel):
     response: str
@@ -87,11 +97,16 @@ async def chat(request: ChatRequest):
         # save user message
         db.add_message(session_id, "user", request.message)
 
+        # create galileo callback with session context
+        galileo_callback = GalileoCallback()
+        if request.galileo_session_id:
+            galileo_callback.session_id = request.galileo_session_id
+
         # process with agent
         response = await process_query(
             user_query=request.message,
             conversation_history=conversation_history,
-            callbacks=[GalileoCallback()]
+            callbacks=[galileo_callback]
         )
 
         # save assistant response

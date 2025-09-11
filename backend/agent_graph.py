@@ -172,14 +172,12 @@ def classify_query(state: AgentState) -> AgentState:
     Respond with ONLY the category name.
     """
 
-    # Get callbacks from state if available
+    # Use the shared LLM with callbacks from state
     callbacks = state.get("callbacks", [])
-    llm_with_callbacks = ChatOpenAI(
-        model="gpt-4o-mini", 
-        temperature=0, 
-        openai_api_key=os.getenv("OPENAI_API_KEY"),
-        callbacks=callbacks
-    )
+    if callbacks:
+        llm_with_callbacks = llm.with_config({"callbacks": callbacks})
+    else:
+        llm_with_callbacks = llm
     
     response = llm_with_callbacks.invoke([HumanMessage(content=classification_prompt)])
     classification = response.content.strip().lower()
@@ -221,14 +219,12 @@ def handle_general_chat(state: AgentState) -> AgentState:
     
     Ask the user what they would like help with today"""
 
-    # Get callbacks from state if available
+    # Use the shared LLM with callbacks from state
     callbacks = state.get("callbacks", [])
-    llm_with_callbacks = ChatOpenAI(
-        model="gpt-4o-mini", 
-        temperature=0, 
-        openai_api_key=os.getenv("OPENAI_API_KEY"),
-        callbacks=callbacks
-    )
+    if callbacks:
+        llm_with_callbacks = llm.with_config({"callbacks": callbacks})
+    else:
+        llm_with_callbacks = llm
     
     response = llm_with_callbacks.invoke([HumanMessage(content=system_prompt), *messages])
     state["final_response"] = response.content
@@ -264,14 +260,12 @@ def handle_product_question(state: AgentState) -> AgentState:
     Provide a clear, helpful answer based on the documentation.
     If you mention a product, you can also offer to check inventory or help place an order."""
 
-    # Get callbacks from state if available
+    # Use the shared LLM with callbacks from state
     callbacks = state.get("callbacks", [])
-    llm_with_callbacks = ChatOpenAI(
-        model="gpt-4o-mini", 
-        temperature=0, 
-        openai_api_key=os.getenv("OPENAI_API_KEY"),
-        callbacks=callbacks
-    )
+    if callbacks:
+        llm_with_callbacks = llm.with_config({"callbacks": callbacks})
+    else:
+        llm_with_callbacks = llm
     
     response = llm_with_callbacks.invoke([HumanMessage(content=rag_prompt)])
     state["final_response"] = response.content
@@ -567,17 +561,8 @@ async def process_query(user_query: str, conversation_history: List[Dict] = None
         "awaiting_info": []
     }
 
-    # if we have callbacks, create a new agent instance with them
+    # Add callbacks to state for propagation through all nodes
     if callbacks:
-        # re initialize llm with callbacks for this request
-        llm_with_callbacks = ChatOpenAI(
-            model="gpt-4o-mini",
-            temperature=0,
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-            callbacks=callbacks
-        )
-
-        # create temporary agent with callbacks
         initial_state["callbacks"] = callbacks
 
     # Run the agent

@@ -33,12 +33,27 @@ def send_message(message, session_id=None):
         if session_id:
             payload["session_id"] = session_id
         
+        # Start Galileo session if not already started
+        galileo_session_id = None
         if not st.session_state.galileo_session_started:
             try:
-                galileo_context.start_session(name="Aurora Works Product Agent", external_id=st.session_state.session_id)
+                # Use session_id as external_id for better tracking
+                external_id = session_id if session_id else str(uuid.uuid4())
+                galileo_session_id = galileo_context.start_session(
+                    name="Aurora Works Product Agent", 
+                    external_id=external_id
+                )
                 st.session_state.galileo_session_started = True
+                st.session_state.galileo_session_id = galileo_session_id
             except Exception as e:
                 st.warning(f"Failed to start Galileo session: {e}")
+        else:
+            galileo_session_id = st.session_state.get("galileo_session_id")
+        
+        # Add Galileo session context to payload
+        if galileo_session_id:
+            payload["galileo_session_id"] = galileo_session_id
+            
         response = requests.post("http://localhost:8000/chat", json=payload, timeout=60)
         if response.status_code == 200:
             return response.json()
@@ -68,6 +83,7 @@ def main():
             st.session_state.session_id = None
             st.session_state.messages = []
             st.session_state.galileo_session_started = False
+            st.session_state.galileo_session_id = None
             st.rerun()
         
         # session info
