@@ -1,4 +1,3 @@
-from gc import callbacks
 from itertools import product
 from typing import Optional, TypedDict, Annotated, List, Dict, Any, Literal
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
@@ -18,8 +17,8 @@ from rag_pipeline import get_rag_pipeline
 # Load environment variables from .env file
 load_dotenv()
 
-# Initialize the LLM
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=os.getenv("OPENAI_API_KEY"), callbacks=callbacks) # TO DO: CAN I PUT LLM CALLBACK HERE
+# Initialize the LLM (base instance without callbacks)
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=os.getenv("OPENAI_API_KEY"))
 
 # Define the agent state structure
 class AgentState(TypedDict):
@@ -173,7 +172,16 @@ def classify_query(state: AgentState) -> AgentState:
     Respond with ONLY the category name.
     """
 
-    response = llm.invoke([HumanMessage(content=classification_prompt)])
+    # Get callbacks from state if available
+    callbacks = state.get("callbacks", [])
+    llm_with_callbacks = ChatOpenAI(
+        model="gpt-4o-mini", 
+        temperature=0, 
+        openai_api_key=os.getenv("OPENAI_API_KEY"),
+        callbacks=callbacks
+    )
+    
+    response = llm_with_callbacks.invoke([HumanMessage(content=classification_prompt)])
     classification = response.content.strip().lower()
 
     # Validate the classification, default to general
@@ -213,7 +221,16 @@ def handle_general_chat(state: AgentState) -> AgentState:
     
     Ask the user what they would like help with today"""
 
-    response = llm.invoke([HumanMessage(content=system_prompt), *messages])
+    # Get callbacks from state if available
+    callbacks = state.get("callbacks", [])
+    llm_with_callbacks = ChatOpenAI(
+        model="gpt-4o-mini", 
+        temperature=0, 
+        openai_api_key=os.getenv("OPENAI_API_KEY"),
+        callbacks=callbacks
+    )
+    
+    response = llm_with_callbacks.invoke([HumanMessage(content=system_prompt), *messages])
     state["final_response"] = response.content
     
     # clear any ongoing action
@@ -247,7 +264,16 @@ def handle_product_question(state: AgentState) -> AgentState:
     Provide a clear, helpful answer based on the documentation.
     If you mention a product, you can also offer to check inventory or help place an order."""
 
-    response = llm.invoke([HumanMessage(content=rag_prompt)])
+    # Get callbacks from state if available
+    callbacks = state.get("callbacks", [])
+    llm_with_callbacks = ChatOpenAI(
+        model="gpt-4o-mini", 
+        temperature=0, 
+        openai_api_key=os.getenv("OPENAI_API_KEY"),
+        callbacks=callbacks
+    )
+    
+    response = llm_with_callbacks.invoke([HumanMessage(content=rag_prompt)])
     state["final_response"] = response.content
 
     # Clear any ongoing action
@@ -547,8 +573,8 @@ async def process_query(user_query: str, conversation_history: List[Dict] = None
         llm_with_callbacks = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0,
-            opneai_api_key=os.getenv("OPENAI_API_KEY"),
-            callbacks=callbacks # TO DO: CAN I MOVE THIS OUT TO THE TOP
+            openai_api_key=os.getenv("OPENAI_API_KEY"),
+            callbacks=callbacks
         )
 
         # create temporary agent with callbacks

@@ -6,6 +6,7 @@ from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 import uvicorn
 import os
+from galileo.handlers.langchain import GalileoCallback
 
 # Import agent & database
 from agent_graph import process_query
@@ -89,8 +90,8 @@ async def chat(request: ChatRequest):
         # process with agent
         response = await process_query(
             user_query=request.message,
-            conversation_history=conversation_history
-            # ADD GALILEO CALLBACK HERE??
+            conversation_history=conversation_history,
+            callbacks=[GalileoCallback()]
         )
 
         # save assistant response

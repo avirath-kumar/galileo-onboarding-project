@@ -32,11 +32,13 @@ def send_message(message, session_id=None):
         payload = {"message": message}
         if session_id:
             payload["session_id"] = session_id
-
-        # galileo session id
-        if st.session_state.galileo_session_started:
-            payload["galileo_session_id"] = st.session_state.get("galileo_external_id")
         
+        if not st.session_state.galileo_session_started:
+            try:
+                galileo_context.start_session(name="Aurora Works Product Agent", external_id=st.session_state.session_id)
+                st.session_state.galileo_session_started = True
+            except Exception as e:
+                st.warning(f"Failed to start Galileo session: {e}")
         response = requests.post("http://localhost:8000/chat", json=payload, timeout=60)
         if response.status_code == 200:
             return response.json()
@@ -44,31 +46,6 @@ def send_message(message, session_id=None):
             return f"Error: {response.status_code}"
     except Exception as e:
         return f"Error: {str(e)}"
-
-# Initialize a galileo session
-def init_galileo_session():
-    if not st.session_state.galileo_session_started:
-        try:
-            # generate a unique external id for this session
-            external_id = f"aurora-{str(uuid.uuid4())[:8]}"
-            st.session_state.galileo_external_id = external_id
-
-            # start galileo session
-            galileo_context.start_session(
-                name="Aurora Works Product Agent",
-                external_id=external_id,
-                metadata={
-                    "app": "aurora_works",
-                    "version": "1.0.0",
-                    "environment": os.getenv("ENVIRONMENT", "development")
-                }
-            )
-            st.session_state.galileo_session_started = True
-            return True
-        except Exception as e:
-            st.error(f"Failed to initialize Galileo: {str(e)}")
-            return False
-    return st.session_state.galileo_session_started
 
 # Main frontend page function
 def main():
@@ -90,6 +67,7 @@ def main():
             # reset session state
             st.session_state.session_id = None
             st.session_state.messages = []
+            st.session_state.galileo_session_started = False
             st.rerun()
         
         # session info
