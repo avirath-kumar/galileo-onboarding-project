@@ -115,7 +115,8 @@ def extract_quantity(text: str) -> Optional[int]:
             value = match.group(1)
             if value.isdigit():
                 return int(value)
-            elif value in number_words[value]
+            elif value in number_words:
+                return number_words[value]
 
     return None
 
@@ -352,11 +353,14 @@ def place_order(state: AgentState) -> AgentState:
     if email_match:
         collected_info["email"] = email_match.group(0)
     
+    # update state with any new info found
+    state["collected_info"] = collected_info
+    
     # check what information is missing
     missing_info = []
-    if product not in collected_info:
+    if "product" not in collected_info:
         missing_info.append("product")
-    if quantity not in collected_info:
+    if "quantity" not in collected_info:
         missing_info.append("quantity")
     
     if missing_info:
