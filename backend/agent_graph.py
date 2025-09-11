@@ -10,12 +10,23 @@ import os
 import requests
 import json
 import re
+import uuid
+from galileo.handlers.langchain import GalileoAsyncCallback
 
 # import local rag pipeline as library
 from rag_pipeline import get_rag_pipeline
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Create galileo callback, define config
+galileo_callback = GalileoAsyncCallback(project_name="onboarding-project")
+config = {
+    "callbacks": [galileo_callback],
+    "configurable": {
+        "thread_id": str(uuid.uuid4())
+    }
+}
 
 # Initialize the LLM
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=os.getenv("OPENAI_API_KEY"))
@@ -540,6 +551,6 @@ async def process_query(user_query: str, conversation_history: List[Dict] = None
     }
 
     # Run the agent
-    result = await agent.ainvoke(initial_state) # callback should be right here
+    result = await agent.ainvoke(initial_state, config) # callback passed in through config
     
     return result["final_response"]
