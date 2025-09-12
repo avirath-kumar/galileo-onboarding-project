@@ -20,7 +20,7 @@ from rag_pipeline import get_rag_pipeline
 load_dotenv()
 
 # Create galileo callback, define config
-galileo_callback = GalileoAsyncCallback(project_name="onboarding-project")
+galileo_callback = GalileoAsyncCallback()
 config = {
     "callbacks": [galileo_callback],
     "configurable": {

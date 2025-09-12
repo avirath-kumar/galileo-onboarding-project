@@ -4,10 +4,13 @@ import json
 import os
 import uuid
 from dotenv import load_dotenv
-import datetime
+from datetime import datetime
 
 from galileo import galileo_context
 from galileo.handlers.langchain import GalileoCallback
+
+# Load env vars
+load_dotenv()
 
 st.set_page_config(page_title="Aurora Works Product Agent", page_icon="💻", layout="wide")
 
@@ -45,7 +48,7 @@ def main():
     # Start Galileo session if not already started
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     session_name = f"Aurora Works - {current_time}"
-    galileo_context.start_session(name=session_name, external_id=uuid(uuid.uuid4()))
+    galileo_context.start_session(name=session_name, external_id=str(uuid.uuid4()))
     
     st.title("💻 Aurora Works Product Agent")
     
