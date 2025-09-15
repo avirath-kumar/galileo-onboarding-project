@@ -19,6 +19,10 @@ if "session_id" not in st.session_state:
     st.session_state.session_id = None
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "galileo_initialized" not in st.session_state:
+    st.session_state.galileo_initialized = False
+    st.session_state.galileo_session_id = None
+    st.session_state.galileo_session_name = None
 
 # Helper function for backend health check
 def check_backend_health():
@@ -45,10 +49,19 @@ def send_message(message, session_id=None):
 
 # Main frontend page function
 def main():
-    # Start Galileo session if not already started
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    session_name = f"Aurora Works - {current_time}"
-    galileo_context.start_session(name=session_name, external_id=str(uuid.uuid4()))
+    # initialize galileo session only if not initialized
+    if not st.session_state.galileo_initialized:
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        session_name = f"Aurora Works - {current_time}"
+        galileo_session_id = str(uuid.uuid4())
+
+        # start galileo session once
+        galileo_context.start_session(name=session_name, external_id=galileo_session_id)
+
+        # Mark as initialized in session state
+        st.session_state.galileo_initialized = True
+        st.session_state.galileo_session_id = galileo_session_id
+        st.session_state.galileo_session_name = session_name
     
     st.title("💻 Aurora Works Product Agent")
     
