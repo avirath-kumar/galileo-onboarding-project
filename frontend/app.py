@@ -20,25 +20,19 @@ if "session_id" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Galileo state mgmt
+# Galileo state mgmt - initialize only once per streamlit session
 if "galileo_initialized" not in st.session_state:
-    st.session_state.galileo_initialized = False
-    st.session_state.galileo_session_id = None
-    st.session_state.galileo_session_name = None
-    
-    # initialize galileo session only if not initialized
-    if not st.session_state.galileo_initialized:
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        session_name = f"Aurora Works - {current_time}"
-        galileo_session_id = str(uuid.uuid4())
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    session_name = f"Aurora Works - {current_time}"
+    galileo_session_id = str(uuid.uuid4())
 
-        # start galileo session once
-        galileo_context.start_session(name=session_name, external_id=galileo_session_id)
+    # start galileo session once
+    galileo_context.start_session(name=session_name, external_id=galileo_session_id)
 
-        # Mark as initialized in session state
-        st.session_state.galileo_initialized = True
-        st.session_state.galileo_session_id = galileo_session_id
-        st.session_state.galileo_session_name = session_name
+    # Mark as initialized in session state
+    st.session_state.galileo_initialized = True
+    st.session_state.galileo_session_id = galileo_session_id
+    st.session_state.galileo_session_name = session_name
 
 # Helper function for backend health check
 def check_backend_health():
