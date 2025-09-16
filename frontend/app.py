@@ -47,7 +47,7 @@ def send_message(message, session_id=None):
     try:
         payload = {
             "message": message,
-            "galileo_session_id": galileo_session_id
+            "galileo_session_id": st.session_state.galileo_session_id
         }
         if session_id:
             payload["session_id"] = session_id
@@ -107,7 +107,7 @@ def main():
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 # invoke send_message function which goes to backend
-                response_data = send_message(prompt, st.session_state.session_id, st.session_state.galileo_session_id)
+                response_data = send_message(prompt, st.session_state.session_id)
 
                 if "error" not in response_data:
                     # Update session id if new

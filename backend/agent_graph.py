@@ -136,7 +136,7 @@ def classify_query(state: AgentState) -> AgentState:
     collected_info = state.get("collected_info", {})
 
     # if we're in the middle of an action, check if user is providing requested info
-    if current_action in ["place order", "check inventory"]:
+    if current_action in ["place_order", "check_inventory"]:
         # check if message contains info we're looking for
         product = normalize_product_name(last_message)
         quantity = extract_quantity(last_message)
@@ -151,29 +151,32 @@ def classify_query(state: AgentState) -> AgentState:
             if quantity:
                 collected_info["quantity"] = quantity
             state["collected_info"] = collected_info
-    
+
+            # return early to avoid re-classification
+            return state
+
     # otherwise, do fresh classification
     conversation_context = "\n".join([m.content for m in messages[-3:]]) # last 3 messages for context
 
     classification_prompt = f"""
     Classify the user's intent based on this message: "{last_message}"
-    
+
     Categories:
     1. "product_question" - Questions about product specs, features, documentation, troubleshooting
     2. "check_inventory" - User wants to check stock/availability
     3. "place_order" - User wants to buy/purchase/order a product
     4. "general" - Greetings, general chat, other topics
-    
+
     Look for keywords:
     - Inventory/stock/available/in stock → check_inventory
     - Buy/order/purchase/want to get → place_order
     - Specs/features/documentation/how does/troubleshooting → product_question
-    
+
     Recent context: {conversation_context}
-    
+
     Respond with ONLY the category name.
     """
-    
+
     response = llm.invoke([HumanMessage(content=classification_prompt)])
     classification = response.content.strip().lower()
 
@@ -181,7 +184,7 @@ def classify_query(state: AgentState) -> AgentState:
     valid_classifications = ["product_question", "general", "check_inventory", "place_order"]
     if classification not in valid_classifications:
         classification = "general"
-    
+
     state["classification"] = classification
     
     # reset action tracking for new intents
@@ -391,6 +394,13 @@ def place_order(state: AgentState) -> AgentState:
 
 Please provide these details."""
 
+        elif "product" in missing_info:
+            response += """ to know which product you'd like to order:
+
+• Atlas 108 ($899.99)
+• Nova 75 ($649.99)
+• Zephyr 87 ($749.99)"""
+
         elif "quantity" in missing_info:
             response += " to know **how many units** you'd like to order."
         state["final_response"] = response
@@ -411,7 +421,7 @@ Please provide these details."""
             state["collected_info"] = {}
         else:
             # Format the order confirmation
-            response = f""" **Order Confirmed!**
+            response = f"""**Order Confirmed!**
 
 **Order Details:**
 ━━━━━━━━━━━━━━━━━━━━━
@@ -497,18 +507,10 @@ async def process_query(
     callbacks: List = None
 ):
     """Process a user query through the agent."""
-    
+
     # use session_id as thread_id - if none, create one
     thread_id = session_id or str(uuid.uuid4())
 
-    # create galileo callback
-    galileo_callback = GalileoAsyncCallback()
-
-    # if galileo_session_id provided, set it in the context
-    if galileo_session_id:
-        # set external_id and link with frontend
-        galileo_context.set_external_id(galileo_session_id)
-    
     # Create galileo callback, define config, consistent thread_id
     galileo_callback = GalileoAsyncCallback()
     config = {
@@ -517,17 +519,17 @@ async def process_query(
             "thread_id": thread_id
         }
     }
-    
+
     # Build message history
     messages = []
-    
+
     if conversation_history:
         for msg in conversation_history:
             if msg["role"] == "user":
                 messages.append(HumanMessage(content=msg["content"]))
             else:
                 messages.append(AIMessage(content=msg["content"]))
-    
+
     # Add current query
     messages.append(HumanMessage(content=user_query))
 
@@ -571,5 +573,5 @@ async def process_query(
 
     # Run the agent
     result = await agent.ainvoke(initial_state, config) # callback passed in through config
-    
+
     return result["final_response"]
