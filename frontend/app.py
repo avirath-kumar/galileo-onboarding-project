@@ -45,7 +45,10 @@ def check_backend_health():
 # Helper function for chat with backend
 def send_message(message, session_id=None):
     try:
-        payload = {"message": message}
+        payload = {
+            "message": message,
+            "galileo_session_id": galileo_session_id
+        }
         if session_id:
             payload["session_id"] = session_id
             
@@ -104,11 +107,9 @@ def main():
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 # invoke send_message function which goes to backend
-                response_data = send_message(prompt, st.session_state.session_id)
+                response_data = send_message(prompt, st.session_state.session_id, st.session_state.galileo_session_id)
 
-                if "error" in response_data:
-                    st.error(response_data["error"])
-                else:
+                if "error" not in response_data:
                     # Update session id if new
                     if not st.session_state.session_id:
                         st.session_state.session_id = response_data["session_id"]
@@ -117,6 +118,8 @@ def main():
                     response_text = response_data["response"]
                     st.write(response_text)
                     st.session_state.messages.append({"role": "assistant", "content": response_text})
+                else:
+                    st.error(response_data["error"])
 
 if __name__ == "__main__":
     main()
