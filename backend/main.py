@@ -9,7 +9,6 @@ import os
 
 # Import agent & database
 from agent_graph import process_query
-from frontend.app import galileo_session_id
 from rag_pipeline import get_rag_pipeline
 from database import get_db
 
