@@ -12,21 +12,13 @@ import json
 import re
 import uuid
 from galileo.handlers.langchain import GalileoAsyncCallback
+from galileo import galileo_context
 
 # import local rag pipeline as library
 from rag_pipeline import get_rag_pipeline
 
 # Load environment variables from .env file
 load_dotenv()
-
-# Create galileo callback, define config
-galileo_callback = GalileoAsyncCallback()
-config = {
-    "callbacks": [galileo_callback],
-    "configurable": {
-        "thread_id": str(uuid.uuid4())
-    }
-}
 
 # Initialize the LLM
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=os.getenv("OPENAI_API_KEY"))
@@ -497,8 +489,35 @@ def create_agent_graph():
 agent = create_agent_graph()
 
 # Helper function for easy invocation. callbacks: List of callbacks for monitoring
-async def process_query(user_query: str, conversation_history: List[Dict] = None, callbacks: List = None):
+async def process_query(
+    user_query: str,
+    conversation_history: List[Dict] = None,
+    session_id: str = None,
+    galileo_session_id: str = None,
+    callbacks: List = None
+):
     """Process a user query through the agent."""
+    
+    # use session_id as thread_id - if none, create one
+    thread_id = session_id or str(uuid.uuid4())
+
+    # create galileo callback
+    galileo_callback = GalileoAsyncCallback()
+
+    # if galileo_session_id provided, set it in the context
+    if galileo_session_id:
+        # set external_id and link with frontend
+        galileo_context.set_external_id(galileo_session_id)
+    
+    # Create galileo callback, define config, consistent thread_id
+    galileo_callback = GalileoAsyncCallback()
+    config = {
+        "callbacks": [galileo_callback],
+        "configurable": {
+            "thread_id": thread_id
+        }
+    }
+    
     # Build message history
     messages = []
     

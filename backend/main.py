@@ -9,6 +9,7 @@ import os
 
 # Import agent & database
 from agent_graph import process_query
+from frontend.app import galileo_session_id
 from rag_pipeline import get_rag_pipeline
 from database import get_db
 
@@ -42,6 +43,7 @@ class SessionResponse(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
+    galileo_session_id: Optional[str] = None
 
 class ChatResponse(BaseModel):
     response: str
@@ -86,10 +88,12 @@ async def chat(request: ChatRequest):
         # save user message
         db.add_message(session_id, "user", request.message)
 
-        # process with agent
+        # process with agent, pass session_id and galileo_session_id to the agent
         response = await process_query(
             user_query=request.message,
-            conversation_history=conversation_history
+            conversation_history=conversation_history,
+            session_id=session_id,
+            galileo_session_id=request.galileo_session_id
         )
 
         # save assistant response
