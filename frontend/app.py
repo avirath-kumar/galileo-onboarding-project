@@ -2,37 +2,18 @@ import streamlit as st
 import requests
 import json
 import os
-import uuid
 from dotenv import load_dotenv
-from datetime import datetime
-
-from galileo import galileo_context
-from galileo.handlers.langchain import GalileoCallback
 
 # Load env vars
 load_dotenv()
 
 st.set_page_config(page_title="Aurora Works Product Agent", page_icon="💻", layout="wide")
 
-# initialize session state for the conversation
+# Initialize session state for the conversation
 if "session_id" not in st.session_state:
     st.session_state.session_id = None
 if "messages" not in st.session_state:
     st.session_state.messages = []
-
-# Galileo state mgmt - initialize only once per streamlit session
-if "galileo_initialized" not in st.session_state:
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    session_name = f"Aurora Works - {current_time}"
-    galileo_session_id = str(uuid.uuid4())
-
-    # start galileo session once
-    galileo_context.start_session(name=session_name, external_id=galileo_session_id)
-
-    # Mark as initialized in session state
-    st.session_state.galileo_initialized = True
-    st.session_state.galileo_session_id = galileo_session_id
-    st.session_state.galileo_session_name = session_name
 
 # Helper function for backend health check
 def check_backend_health():
@@ -45,10 +26,7 @@ def check_backend_health():
 # Helper function for chat with backend
 def send_message(message, session_id=None):
     try:
-        payload = {
-            "message": message,
-            "galileo_session_id": st.session_state.galileo_session_id
-        }
+        payload = {"message": message}
         if session_id:
             payload["session_id"] = session_id
             
@@ -56,9 +34,18 @@ def send_message(message, session_id=None):
         if response.status_code == 200:
             return response.json()
         else:
-            return f"Error: {response.status_code}"
+            # Try to get error details from response
+            try:
+                error_detail = response.json().get("detail", f"Status code: {response.status_code}")
+            except:
+                error_detail = f"Status code: {response.status_code}"
+            return {"error": error_detail}
+    except requests.exceptions.ConnectionError:
+        return {"error": "Cannot connect to backend. Make sure it's running on port 8000."}
+    except requests.exceptions.Timeout:
+        return {"error": "Request timed out. The backend might be processing a heavy request."}
     except Exception as e:
-        return f"Error: {str(e)}"
+        return {"error": str(e)}
 
 # Main frontend page function
 def main():
@@ -69,15 +56,13 @@ def main():
     with st.sidebar:
         st.header("Conversation")
 
-        # wipe session id, message history when new convo button pressed
+        # New conversation button
         if st.button("New Conversation"):
-            
-            # reset session state
             st.session_state.session_id = None
             st.session_state.messages = []
             st.rerun()
         
-        # session info
+        # Session info
         if st.session_state.session_id:
             st.success(f"Session: {st.session_state.session_id[:8]}...")
         else:
@@ -85,18 +70,18 @@ def main():
 
         st.divider()
 
-        # backend status - might remove this
+        # Backend status
         if check_backend_health():
             st.success("Backend connected")
         else:
             st.error("Backend not available")
     
-    # display conversation history
+    # Display conversation history
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.write(message["content"])
     
-    # chat input
+    # Chat input
     if prompt := st.chat_input("Ask about our products, check inventory, or place an order..."):
         # Add user message to chat
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -106,20 +91,22 @@ def main():
         # Get response from backend
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                # invoke send_message function which goes to backend
                 response_data = send_message(prompt, st.session_state.session_id)
 
-                if "error" not in response_data:
+                # Check if response is an error (string) or success (dict)
+                if isinstance(response_data, dict) and "error" not in response_data:
                     # Update session id if new
                     if not st.session_state.session_id:
                         st.session_state.session_id = response_data["session_id"]
 
-                    # display and store response
+                    # Display and store response
                     response_text = response_data["response"]
                     st.write(response_text)
                     st.session_state.messages.append({"role": "assistant", "content": response_text})
                 else:
-                    st.error(response_data["error"])
+                    # Handle error case
+                    error_msg = response_data.get("error", response_data) if isinstance(response_data, dict) else response_data
+                    st.error(f"Error: {error_msg}")
 
 if __name__ == "__main__":
     main()

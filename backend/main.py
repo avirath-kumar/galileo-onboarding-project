@@ -6,6 +6,9 @@ from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 import uvicorn
 import os
+import uuid
+from galileo import galileo_context
+from datetime import datetime
 
 # Import agent & database
 from agent_graph import process_query
@@ -32,6 +35,9 @@ llm = ChatOpenAI(
     openai_api_key=os.getenv("OPENAI_API_KEY")
 )
 
+# store galileo session ID globally for backend
+GALILEO_SESSION_ID = None
+
 # Create classes for requests and responses
 class SessionRequest(BaseModel):
     pass
@@ -42,7 +48,6 @@ class SessionResponse(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
-    galileo_session_id: Optional[str] = None
 
 class ChatResponse(BaseModel):
     response: str
@@ -92,7 +97,7 @@ async def chat(request: ChatRequest):
             user_query=request.message,
             conversation_history=conversation_history,
             session_id=session_id,
-            galileo_session_id=request.galileo_session_id
+            galileo_session_id=GALILEO_SESSION_ID
         )
 
         # save assistant response
@@ -124,8 +129,29 @@ async def startup_event():
         print("Starting RAG pipeline initialization (non-blocking)...")
         # Don't block startup - RAG will initialize on first use
         print("RAG pipeline will initialize on first query")
+
+        # initialize galileo session
+        if os.getenv("GALILEO_API_KEY"):
+            GALILEO_SESSION_ID = str(uuid.uuid4())
+            session_name = f"Backend Session - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+
+            galileo_context.start_session(name=session_name, external_id=GALILEO_SESSION_ID)
+            print(f"Galileo session started: {session_name} (ID: {GALILEO_SESSION_ID[:8]}...)")
+        else:
+            print("Galileo API key not found - running without Galileo monitoring")
+    
     except Exception as e:
         print(f"Warning: Could not initialize RAG pipeline: {str(e)}")
+
+# Cleanup on shutdown
+@app.on_event("shutdown")
+async def shutdown_event():
+    try:
+        if GALILEO_SESSION_ID:
+            galileo_context.clear_session()
+            print("Galileo session ended")
+    except Exception as e:
+        print(f"Error ending Galileo session: {str(e)}")
 
 # Main function
 if __name__ == "__main__":
