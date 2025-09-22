@@ -8,7 +8,7 @@ from galileo_core.schemas.protect.stage import StageType
 
 from dotenv import load_dotenv
 
-load_dotenv
+load_dotenv()
 
 # create a rule for toxicity
 toxicity_rule = Rule(
