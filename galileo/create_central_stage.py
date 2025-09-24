@@ -1,4 +1,4 @@
-from galileo import GalileoScorers
+from galileo.schema.metrics import GalileoScorers
 from galileo.stages import create_protect_stage
 
 from galileo_core.schemas.protect.action import OverrideAction
