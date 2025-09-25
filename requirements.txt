@@ -1,26 +1,26 @@
 # Core dependencies
-fastapi==0.115.0  # Latest stable version
-uvicorn[standard]==0.32.1  # Latest stable version
-streamlit==1.40.2  # Latest stable version
-requests==2.32.3  # Current version is fine
-python-dotenv==1.0.1  # Current version is fine
+fastapi~=0.115.0  # Allow patch updates
+uvicorn[standard]~=0.32.1  # Allow patch updates
+streamlit~=1.40.0  # Allow patch updates
+requests~=2.32.0  # Allow patch updates
+python-dotenv~=1.0.0  # Allow patch updates
 
 # LangChain and LLM
-langchain==0.3.13  # Latest v0.3 stable
-langchain-openai==0.2.14  # Latest stable version
-langchain-community==0.3.13  # Match langchain version
-langchain-core==0.3.30  # Core package
-openai==1.58.1  # Latest stable version
-langgraph==0.2.63  # Latest stable version
+langchain~=0.3.13  # Allow patch updates within v0.3
+langchain-openai~=0.2.14  # Allow patch updates
+langchain-community~=0.3.13  # Match langchain version
+langchain-core~=0.3.30  # Allow patch updates
+openai~=1.58.0  # Allow patch updates
+langgraph~=0.2.63  # Allow patch updates
 
 # RAG and Vector Database
-chromadb==0.5.23  # Latest stable version
-pypdf==6.0.0  # Latest stable version (successor to PyPDF2)
-tiktoken==0.11.0  # Latest stable version
+chromadb~=0.5.23  # Allow patch updates
+pypdf~=6.0.0  # Allow patch updates
+tiktoken~=0.11.0  # Allow patch updates
 
 # Additional utilities
-pydantic==2.10.4  # Latest v2 stable (required for FastAPI)
-numpy==1.26.4  # Latest stable for Python 3.9+
+pydantic>=2.10.4,<2.11.0  # Known working range - avoid 2.11.x conflicts
+numpy~=1.26.0  # Allow patch updates
 
 # Galileo
 galileo

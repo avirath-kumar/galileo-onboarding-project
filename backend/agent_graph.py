@@ -1,5 +1,6 @@
 from itertools import product
 from typing import Optional, TypedDict, Annotated, List, Dict, Any, Literal
+from galileo.decorator import SPAN_TYPE
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
@@ -11,6 +12,8 @@ import requests
 import json
 import re
 import uuid
+
+from galileo import log
 from galileo.handlers.langchain import GalileoAsyncCallback
 from galileo import galileo_context
 
