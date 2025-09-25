@@ -14,7 +14,6 @@ import re
 import uuid
 
 from galileo import log
-from galileo.handlers.langchain import GalileoAsyncCallback
 from galileo import galileo_context
 
 # import local rag pipeline as library
@@ -38,7 +37,7 @@ class AgentState(TypedDict):
     awaiting_info: Optional[List[str]] # track which info we're waiting for
 
 # Tool definitions - functions the agent can call
-@tool
+@log(span_type="tool", name="Check Inventory")
 def check_inventory_api(product_name: str) -> Dict:
     """Check inventory level for a specific product - atlas 108, nova 75, zephyr 87"""
     try:
@@ -57,7 +56,8 @@ def check_inventory_api(product_name: str) -> Dict:
             "error": f"Error connecting to inventory service: {str(e)}"
         }
 
-@tool
+
+@log(span_type="tool", name="Place Order")
 def place_order_api(product_name: str, quantity: int, customer_email: str = "customer@example.com") -> Dict:
     """Place order for a specific product. Atlas 108, Nova 75, Zephyr 87"""
     try:
@@ -83,8 +83,8 @@ def place_order_api(product_name: str, quantity: int, customer_email: str = "cus
         }
 
 # Bind tools
-tools = [check_inventory_api, place_order_api]
-llm_with_tools = llm.bind_tools(tools)
+# tools = [check_inventory_api, place_order_api]
+# llm_with_tools = llm.bind_tools(tools)
 
 # Helper function to normalize product names
 def normalize_product_name(text: str) -> Optional[str]:
@@ -129,14 +129,15 @@ def extract_quantity(text: str) -> Optional[int]:
 # Node functions - these get called when the graph executes
 
 # Node 1: Classify the query
+@log(span_type="agent", name="Classify Query")
 def classify_query(state: AgentState) -> AgentState:
     """Classify whether the query is general or needs RAG"""
     messages = state["messages"]
     last_message = messages[-1].content
 
     # check if we have an ongoing action from previous state
-    current_action = state.get("current_action")
-    collected_info = state.get("collected_info", {})
+    current_action = state.get("current_action") if state else None
+    collected_info = state.get("collected_info", {}) if state else {}
 
     # if we're in the middle of an action, check if user is providing requested info
     if current_action in ["place_order", "check_inventory"]:
@@ -145,7 +146,7 @@ def classify_query(state: AgentState) -> AgentState:
         quantity = extract_quantity(last_message)
 
         if product or quantity:
-            # user is providing info for ongoing action
+            # user is providing info for ongoing action - keep the same classification
             state["classification"] = current_action
 
             # update collected info
@@ -155,7 +156,7 @@ def classify_query(state: AgentState) -> AgentState:
                 collected_info["quantity"] = quantity
             state["collected_info"] = collected_info
 
-            # return early to avoid re-classification
+            # continue with the ongoing action - don't return early
             return state
 
     # otherwise, do fresh classification
@@ -193,7 +194,9 @@ def classify_query(state: AgentState) -> AgentState:
     # reset action tracking for new intents
     if classification in ["check_inventory", "place_order"]:
         state["current_action"] = classification
-        state["collected_info"] = {}
+        # only reset collected_info if starting a completely new action
+        if current_action != classification:
+            state["collected_info"] = {}
         state["awaiting_info"] = []
     else:
         state["current_action"] = None
@@ -203,6 +206,7 @@ def classify_query(state: AgentState) -> AgentState:
     return state
 
 # Node 2a: Handle general chat
+@log(span_type="llm", name="General Chat")
 def handle_general_chat(state: AgentState) -> AgentState:
     """Handle general conversation without RAG"""
     messages = state["messages"]
@@ -230,6 +234,7 @@ def handle_general_chat(state: AgentState) -> AgentState:
     return state
 
 # Node 2b: Handle product questions with RAG
+@log(span_type="retriever", name="Product Question")
 def handle_product_question(state: AgentState) -> AgentState:
     """Use RAG to answer product related questions"""
     messages = state["messages"]
@@ -264,6 +269,7 @@ def handle_product_question(state: AgentState) -> AgentState:
     return state
 
 # Node 2c: check inventory
+@log(span_type="llm", name="Check Inventory")
 def check_inventory(state: AgentState) -> AgentState:
     "Inventory checking node with user interaction to ensure api params are received through chat w. user"
     messages = state["messages"]
@@ -301,7 +307,7 @@ Just tell me the product name or model number."""
     else:
         # we have the product, check inventory
         product_name = collected_info["product"]
-        inventory_result = check_inventory_api.invoke({"product_name": product_name})
+        inventory_result = check_inventory_api(product_name)
 
         if "error" in inventory_result:
             response = f"I couldn't check inventory: {inventory_result['error']}\n\nWould you like to try again?"
@@ -319,13 +325,17 @@ Would you like to place an order for this product? Just let me know how many uni
 
             # set up for potential order
             state["current_action"] = "place_order"
-            state["collected_info"] = {"product": product_name} # carry forward product info
+            # preserve any existing collected info and add product
+            if "collected_info" not in state:
+                state["collected_info"] = {}
+            state["collected_info"]["product"] = product_name
 
         state["final_response"] = response
     
     return state
 
 # Node 2d: place order
+@log(span_type="llm", name="Place Order")
 def place_order(state: AgentState) -> AgentState:
     """Handle order placement with user interaction"""
     messages = state["messages"]
@@ -412,11 +422,11 @@ Please provide these details."""
         # We have all required info, place the order
         email = collected_info.get("email", "customer@example.com")
         
-        order_result = place_order_api.invoke({
-            "product_name": collected_info["product"],
-            "quantity": collected_info["quantity"],
-            "customer_email": email
-        })
+        order_result = place_order_api(
+            collected_info["product"],
+            collected_info["quantity"],
+            email
+        )
         
         if "error" in order_result:
             response = f"I encountered an issue placing your order: {order_result['error']}\n\nWould you like to try again?"
@@ -450,15 +460,20 @@ Is there anything else I can help you with today?"""
 # Define routing logic
 def route_after_classification(state: AgentState) -> Literal["handle_general_chat", "handle_product_question", "check_inventory", "place_order"]:
     """Routing function: Decides which node to go to after classification."""
-    
+
     classification_map = {
             "general": "handle_general_chat",
-            "product_question": "handle_product_question", 
+            "product_question": "handle_product_question",
             "check_inventory": "check_inventory",
             "place_order": "place_order"
         }
 
-    return classification_map.get(state["classification"], "handle_general_chat")
+    classification = state.get("classification", "general")
+    # validate classification is valid
+    if classification not in classification_map:
+        classification = "general"
+
+    return classification_map[classification]
 
 # Build the graph
 def create_agent_graph():
@@ -514,15 +529,6 @@ async def process_query(
     # use session_id as thread_id - if none, create one
     thread_id = session_id or str(uuid.uuid4())
 
-    # Create galileo callback, define config, consistent thread_id
-    galileo_callback = GalileoAsyncCallback()
-    config = {
-        "callbacks": [galileo_callback],
-        "configurable": {
-            "thread_id": thread_id
-        }
-    }
-
     # Build message history
     messages = []
 
@@ -541,7 +547,7 @@ async def process_query(
     collected_info = {}
 
     # check if last assistant message indicates we're waiting for info
-    if conversation_history and len(conversation_history) > 0:
+    if conversation_history:
         last_assistant_msg = None
         for msg in reversed(conversation_history):
             if msg["role"] == "assistant":
@@ -549,19 +555,26 @@ async def process_query(
                 break
 
         if last_assistant_msg:
-            # Check for patterns indicating ongoing actions
-            if "which product" in last_assistant_msg.lower() and "inventory" in last_assistant_msg.lower():
+            # More robust pattern matching for ongoing actions
+            lower_msg = last_assistant_msg.lower()
+
+            # Check for inventory-related prompts
+            if ("which product" in lower_msg or "product name" in lower_msg) and "inventory" in lower_msg:
                 current_action = "check_inventory"
-            elif "which product" in last_assistant_msg.lower() and "order" in last_assistant_msg.lower():
+            # Check for order-related prompts
+            elif ("which product" in lower_msg or "product name" in lower_msg) and "order" in lower_msg:
                 current_action = "place_order"
-            elif "how many units" in last_assistant_msg.lower():
+            elif "how many units" in lower_msg or "quantity" in lower_msg:
                 current_action = "place_order"
-                # Try to find product from history
+                # Try to find product from recent history
                 for msg in conversation_history[-4:]:
                     product = normalize_product_name(msg["content"])
                     if product:
                         collected_info["product"] = product
                         break
+            # Check for confirmation prompts
+            elif "order confirmed" in lower_msg or "order details" in lower_msg:
+                current_action = None  # Order completed, no ongoing action
 
     # Create initial state
     initial_state = {
@@ -575,6 +588,6 @@ async def process_query(
     }
 
     # Run the agent
-    result = await agent.ainvoke(initial_state, config) # callback passed in through config
+    result = await agent.ainvoke(initial_state) # callback passed in through config
 
     return result["final_response"]

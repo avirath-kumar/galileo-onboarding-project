@@ -132,6 +132,7 @@ async def startup_event():
 
         # initialize galileo session
         if os.getenv("GALILEO_API_KEY"):
+            global GALILEO_SESSION_ID
             GALILEO_SESSION_ID = str(uuid.uuid4())
             session_name = f"Backend Session - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 

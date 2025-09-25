@@ -5,6 +5,7 @@ from typing import Dict, Optional
 import uvicorn
 from datetime import datetime
 import random
+import threading
 
 # Separate fastapi server for product information APIs
 api_app = FastAPI(title="Product APIs", version="1.0.0")
@@ -48,6 +49,9 @@ PRODUCTS = {
         "warehouse": "New York"
     }
 }
+
+# Thread lock for inventory updates
+inventory_lock = threading.Lock()
 
 # Check inventory endpoint
 @api_app.get("/inventory/{product_id}")
@@ -114,8 +118,9 @@ async def place_order(order: OrderRequest):
     delivery_days = random.randint(3, 5)
     estimated_delivery = f"{delivery_days} business days"
 
-    # Update mock inventory
-    PRODUCTS[product_id]["inventory"] -= order.quantity
+    # Update mock inventory with thread safety
+    with inventory_lock:
+        PRODUCTS[product_id]["inventory"] -= order.quantity
 
     # return order response
     return OrderResponse(
